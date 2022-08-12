@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
-
+import os
+import typing
 from collections import OrderedDict
 
 
@@ -23,3 +24,13 @@ class Config(OrderedDict[str, str]):
         with open(self.filename, 'w', encoding='utf8') as fp:
             lines = [f"{key}\t{value}\n" for [key, value] in self.items()]
             fp.writelines(lines)
+
+
+def get_default_config(esp: str) -> typing.Optional[Config]:
+    try:
+        loader = Config(os.path.join(esp, 'loader', 'loader.conf'))
+        if 'default' in loader:
+            config_filename = os.path.join(esp, 'loader', 'entries', f"{loader['default']}.conf")
+            return Config(config_filename)
+    except FileNotFoundError:
+        return None
