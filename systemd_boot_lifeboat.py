@@ -11,14 +11,23 @@ import hashlib
 import os
 import re
 import shutil
+import subprocess
 import time
 
 
-def main(*, esp, max_lifeboats):
+def main(*, esp: str, max_lifeboats: int, default_sort_key: str, default_version: str):
     if max_lifeboats <= 1:
         raise ValueError(f'max_lifeboats{max_lifeboats} must be > 1')
 
     config = get_default_config(esp)
+    if 'sort-key' not in config:
+        config['sort-key'] = default_sort_key
+        config.write(allow_overwriting=True)
+
+    if 'version' not in config:
+        config['version'] = default_version
+        config.write(allow_overwriting=True)
+
     existing_lifeboats = Lifeboat.get_existing(esp)
     for lifeboat in existing_lifeboats:
         if lifeboat.equivalent(config):
@@ -61,8 +70,12 @@ class Config(OrderedDict[str, str]):
     def basename(self) -> str:
         return os.path.basename(self.filepath)
 
-    def write(self):
-        with open(self.filepath, 'x', encoding='utf8') as fp:
+    def write(self, *, allow_overwriting=False):
+        if allow_overwriting:
+            mode = 'w'
+        else:
+            mode = 'x'
+        with open(self.filepath, mode, encoding='utf8') as fp:
             lines = [f"{key}\t{value}\n" for [key, value] in self.items()]
             fp.writelines(lines)
 
@@ -123,6 +136,12 @@ class Lifeboat(Config):
         lifeboat = cls(lifeboat_name, config, ignore_missing=True)
         if 'title' in config:
             lifeboat['title'] += f'@{lifeboat.pretty_date()}'
+
+        if 'version' in config:
+            # We want our version to be lower than the config version, so prefix it with -
+            # Then, we want lifeboats to be sorted in-order according to their timestamp, so add that to the end of the existing version
+            # See https://systemd.io/BOOT_LOADER_SPECIFICATION/#version-order
+            lifeboat['version'] = f'-{config["version"]}-{lifeboat.timestamp()}'
         try:
             if 'efi' in config:
                 lifeboat['efi'] = cls.lifeboat_path(config['efi'], ts)
@@ -148,7 +167,7 @@ class Lifeboat(Config):
         self.clear()
 
     def equivalent(self, other: Config) -> bool:
-        ignore_keys = ['title']
+        ignore_keys = ['title', 'version']
         compare_md5_keys = ['efi']
 
         keys = [x for x in self.keys() if x not in ignore_keys]
@@ -182,13 +201,17 @@ def get_default_config(esp: str) -> Config:
 
 
 if __name__ == '__main__':
+    current_version = subprocess.run(['uname', '-r'], stdout=subprocess.PIPE).stdout.decode('utf8').strip()
     parser = argparse.ArgumentParser(description='Clone the boot entry if it has changed')
-    parser.add_argument('-c', '--max_lifeboats', type=int, default=2)
+    parser.add_argument('-c', '--max-lifeboats', type=int, default=2)
     parser.add_argument('-e', '--esp', help='Directory of the efi system partition', default='/efi')
+    parser.add_argument('--default-sort-key', help='Default sort key to use, if not present', default='linux')
+    parser.add_argument('--default-version', help='Default sort key to use, if not present', default=current_version)
     args = parser.parse_args()
     cwd = os.getcwd()
     os.chroot(args.esp)
     try:
-        main(esp='/', max_lifeboats=args.max_lifeboats)
+        main(esp='/', max_lifeboats=args.max_lifeboats,
+             default_sort_key=args.default_sort_key, default_version=args.default_version)
     finally:
         os.chroot('.')

@@ -181,8 +181,13 @@ efi {efi_path}
             self.assertEqual(entry_md5, md5(entry_path))
 
         # First run, create first lifeboat
-        main(esp=self.esp.name, max_lifeboats=2)
-        ensure_config_untouched()
+        main(esp=self.esp.name, max_lifeboats=2, default_sort_key='linux', default_version='archy')
+        new_config = get_default_config(self.esp.name)
+        self.assertEqual('linux', new_config['sort-key'])
+        self.assertEqual('archy', new_config['version'])
+        config = new_config
+        entry_md5 = md5(entry_path)
+
         lifeboats = Lifeboat.get_existing(self.esp.name)
         self.assertTrue(len(lifeboats) == 1)
         first_lifeboat = lifeboats[0]
@@ -193,7 +198,7 @@ efi {efi_path}
         time.sleep(1)  # Sleep to ensure the next time we run, the timestamp is different
 
         # Second run, no change
-        main(esp=self.esp.name, max_lifeboats=2)
+        main(esp=self.esp.name, max_lifeboats=2, default_sort_key='linux', default_version='archy')
         ensure_config_untouched()
         lifeboats = Lifeboat.get_existing(self.esp.name)
         self.assertTrue(len(lifeboats) == 1)
@@ -203,7 +208,7 @@ efi {efi_path}
         efi_md5 = md5(efi_path)
         second_lifeboat_md5 = efi_md5
         time.sleep(1)
-        main(esp=self.esp.name, max_lifeboats=2)
+        main(esp=self.esp.name, max_lifeboats=2, default_sort_key='linux', default_version='archy')
         ensure_config_untouched()
         lifeboats = Lifeboat.get_existing(self.esp.name)
         self.assertTrue(len(lifeboats) == 2)
@@ -221,7 +226,7 @@ efi {efi_path}
         efi_md5 = md5(efi_path)
         third_lifeboat_md5 = efi_md5
         time.sleep(1)
-        main(esp=self.esp.name, max_lifeboats=2)
+        main(esp=self.esp.name, max_lifeboats=2, default_sort_key='linux', default_version='archy')
         ensure_config_untouched()
         lifeboats = Lifeboat.get_existing(self.esp.name)
         self.assertTrue(len(lifeboats) == 2)
