@@ -4,6 +4,7 @@ from collections import OrderedDict
 from functools import total_ordering
 from multiprocessing.sharedctypes import Value
 
+import argparse
 import datetime
 import errno
 import hashlib
@@ -13,7 +14,7 @@ import shutil
 import time
 
 
-def main(*, esp, max_lifeboats=2):
+def main(*, esp, max_lifeboats):
     if max_lifeboats <= 1:
         raise ValueError(f'max_lifeboats{max_lifeboats} must be > 1')
 
@@ -27,7 +28,7 @@ def main(*, esp, max_lifeboats=2):
     while len(existing_lifeboats) >= max_lifeboats:
         lifeboat = existing_lifeboats[0]
         existing_lifeboats = existing_lifeboats[1:]
-        print(f'Deleting old lifeboat {lifeboat.basename}')
+        print(f'Deleting old lifeboat {lifeboat.basename()}')
         lifeboat.remove()
 
     now = int(time.time())
@@ -100,7 +101,7 @@ class Lifeboat(Config):
         return int(match.group(1))
 
     def pretty_date(self) -> str:
-        return datetime.datetime.fromtimestamp(self.timestamp()).strftime("%b %-d %Y %-H:%-M")
+        return datetime.datetime.fromtimestamp(self.timestamp()).strftime("%b %-d, %Y (%-H:%-M)")
 
     @ classmethod
     def get_existing(cls, esp: str) -> list[Lifeboat]:
@@ -176,3 +177,16 @@ def get_default_config(esp: str) -> Config:
     config_filename = os.path.join(esp, 'loader', 'entries', f"{loader['default']}.conf")
     c = Config(config_filename)
     return c
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Clone the boot entry if it has changed')
+    parser.add_argument('-c', '--max_lifeboats', type=int, default=2)
+    parser.add_argument('-e', '--esp', help='Directory of the efi system partition', default='/efi')
+    args = parser.parse_args()
+    cwd = os.getcwd()
+    os.chdir(args.esp)
+    try:
+        main(esp=args.esp, max_lifeboats=args.max_lifeboats)
+    finally:
+        os.chdir(cwd)

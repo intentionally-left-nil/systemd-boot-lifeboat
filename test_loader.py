@@ -203,7 +203,7 @@ efi {efi_path}
         efi_md5 = md5(efi_path)
         second_lifeboat_md5 = efi_md5
         time.sleep(1)
-        main(esp=self.esp.name)
+        main(esp=self.esp.name, max_lifeboats=2)
         ensure_config_untouched()
         lifeboats = Lifeboat.get_existing(self.esp.name)
         self.assertTrue(len(lifeboats) == 2)
