@@ -44,7 +44,7 @@ class TestConfig(unittest.TestCase):
     def test_get_default_config(self):
         self.create_entry('arch.conf', 'k v')
         self.create_loader('missingdefault notarch')
-        self.assertEqual(None, get_default_config(self.esp.name))
+        self.assertRaises(ValueError, lambda: get_default_config(self.esp.name))
 
         self.create_loader('default arch')
         self.assertEqual({'k': 'v'}, get_default_config(self.esp.name))
@@ -61,9 +61,7 @@ class TestConfig(unittest.TestCase):
 
         lifeboat = Lifeboat.from_default_config(c, now)
 
-        now_date = datetime.datetime.fromtimestamp(lifeboat.timestamp()).strftime("%b %-d %Y")
-
-        self.assertDictEqual({'title': f'my cool arch@{now_date}',
+        self.assertDictEqual({'title': f'my cool arch@{lifeboat.pretty_date()}',
                              'efi': Lifeboat.lifeboat_path(efi_path, now)}, lifeboat)
         pass
 

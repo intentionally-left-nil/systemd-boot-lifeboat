@@ -10,7 +10,21 @@ import hashlib
 import os
 import re
 import shutil
-import typing
+import time
+
+
+def main():
+    esp = os.environ.get('ESP', '/efi')
+    config = get_default_config(esp)
+    existing_lifeboats = Lifeboat.get_existing(esp)
+    for lifeboat in existing_lifeboats:
+        if lifeboat.equivalent(config):
+            print(f'{config.basename()} is already backed up to {lifeboat.basename()}\n Nothing to do')
+            return
+
+    now = int(time.time())
+    lifeboat = Lifeboat.from_default_config(config, now)
+    print(f'Created new backup to {lifeboat.basename()}')
 
 
 class Config(OrderedDict[str, str]):
@@ -32,6 +46,9 @@ class Config(OrderedDict[str, str]):
         except OSError:
             if not ignore_missing:
                 raise
+
+    def basename(self) -> str:
+        return os.path.basename(self.filepath)
 
     def write(self):
         with open(self.filepath, 'x', encoding='utf8') as fp:
@@ -66,30 +83,32 @@ class Lifeboat(Config):
         self.timestamp()  # side effect to ensure the filepath is valid
 
     def timestamp(self) -> int:
-        match = re.search(r'^lifeboat_(\d+)_', os.path.basename(self.filepath))
+        match = re.search(r'^lifeboat_(\d+)_', self.basename())
         if match is None:
             raise ValueError(f"{self.filepath} does not contain a timestamp")
         return int(match.group(1))
 
-    @classmethod
+    def pretty_date(self) -> str:
+        return datetime.datetime.fromtimestamp(self.timestamp()).strftime("%b %-d %Y %-H:%-M")
+
+    @ classmethod
     def get_existing(cls, esp: str) -> list[Lifeboat]:
         config_dir = os.path.join(esp, 'loader', 'entries')
         config_paths = [os.path.join(config_dir, x) for x in os.listdir(config_dir) if x.startswith('lifeboat_')]
         return sorted([cls(x) for x in config_paths])
 
-    @classmethod
+    @ classmethod
     def lifeboat_path(cls, filepath: str, ts: int) -> str:
         dir = os.path.dirname(filepath)
         name = os.path.basename(filepath)
         return os.path.join(dir, f"lifeboat_{ts}_{name}")
 
-    @classmethod
+    @ classmethod
     def from_default_config(cls, config: Config, ts: int) -> Lifeboat:
         lifeboat_name = cls.lifeboat_path(config.filepath, ts)
         lifeboat = cls(lifeboat_name, config, ignore_missing=True)
         if 'title' in config:
-            date = datetime.datetime.fromtimestamp(lifeboat.timestamp()).strftime("%b %-d %Y")
-            lifeboat['title'] += f'@{date}'
+            lifeboat['title'] += f'@{lifeboat.pretty_date()}'
         try:
             if 'efi' in config:
                 lifeboat['efi'] = cls.lifeboat_path(config['efi'], ts)
@@ -132,12 +151,11 @@ class Lifeboat(Config):
         return True
 
 
-def get_default_config(esp: str) -> typing.Optional[Config]:
-    try:
-        loader = Config(os.path.join(esp, 'loader', 'loader.conf'))
-        if 'default' in loader:
-            config_filename = os.path.join(esp, 'loader', 'entries', f"{loader['default']}.conf")
-            c = Config(config_filename)
-            return c
-    except FileNotFoundError:
-        return None
+def get_default_config(esp: str) -> Config:
+    loader = Config(os.path.join(esp, 'loader', 'loader.conf'))
+    if 'default' not in loader:
+        raise ValueError('Missing default key in loader.conf ')
+
+    config_filename = os.path.join(esp, 'loader', 'entries', f"{loader['default']}.conf")
+    c = Config(config_filename)
+    return c
