@@ -33,7 +33,7 @@ def main(*, esp, max_lifeboats):
 
     now = int(time.time())
     lifeboat = Lifeboat.from_default_config(config, now)
-    print(f'Created new backup to {lifeboat.basename()}')
+    print(f'Created boot entry: {lifeboat.basename()}')
 
 
 class Config(OrderedDict[str, str]):
@@ -66,7 +66,7 @@ class Config(OrderedDict[str, str]):
 
 
 def copy(src: str, target: str):
-    print(f'copying {src} to {target}')
+    print(f'Copying {src} to {target}')
     if os.path.exists(target):
         print(f'target already exists: {target}')
         raise OSError(errno.EEXIST, os.strerror(errno.EEXIST))
@@ -185,8 +185,8 @@ if __name__ == '__main__':
     parser.add_argument('-e', '--esp', help='Directory of the efi system partition', default='/efi')
     args = parser.parse_args()
     cwd = os.getcwd()
-    os.chdir(args.esp)
+    os.chroot(args.esp)
     try:
-        main(esp=args.esp, max_lifeboats=args.max_lifeboats)
+        main(esp='/', max_lifeboats=args.max_lifeboats)
     finally:
-        os.chdir(cwd)
+        os.chroot('.')
