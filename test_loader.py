@@ -5,6 +5,7 @@ import time
 import unittest
 
 from systemd_boot_lifeboat import Config, Lifeboat, get_default_config
+from typing import TypedDict
 
 
 class TestConfig(unittest.TestCase):
@@ -100,6 +101,76 @@ class TestConfig(unittest.TestCase):
         expected = [self.create_entry(Lifeboat.lifeboat_path('arch.conf', x), 'k v') for x in [past2, past, now]]
         actual = [x.filepath for x in Lifeboat.get_existing(self.esp.name)]
         self.assertListEqual(expected, actual)
+
+    def test_equivalent(self):
+        efi_path = os.path.join(self.esp.name, 'EFI', 'Arch', 'linux.efi')
+        efi_copy_path = os.path.join(self.esp.name, 'EFI', 'Arch', 'linux_copy.efi')
+        different_efi_path = os.path.join(self.esp.name, 'EFI', 'Arch', 'linux_other.efi')
+        os.makedirs(os.path.dirname(efi_path), exist_ok=True)
+        with open(efi_path, 'w', encoding='utf8') as fp:
+            fp.write("my cool efi")
+
+        with open(efi_copy_path, 'w', encoding='utf8') as fp:
+            fp.write("my cool efi")
+
+        with open(different_efi_path, 'w', encoding='utf8') as fp:
+            fp.write("some other efi")
+
+        class Test(TypedDict):
+            name: str
+            config: Config
+            lifeboat: Lifeboat
+            expected: bool
+        tests: list[Test] = [
+            Test(
+                name="identical configs are equivalent",
+                config=Config('', {'k': 'v', 'k2': 'v2'}, ignore_missing=True),
+                lifeboat=Lifeboat('lifeboat_123_arch.conf', {'k': 'v', 'k2': 'v2'}, ignore_missing=True),
+                expected=True
+            ),
+            Test(
+                name="Configs with different titles are equivalent",
+                config=Config('', {'title': 'hello', 'k2': 'v2'}, ignore_missing=True),
+                lifeboat=Lifeboat('lifeboat_123_arch.conf', {'title': 'world', 'k2': 'v2'}, ignore_missing=True),
+                expected=True
+            ),
+            Test(
+                name="Configs with different values are not equivalent",
+                config=Config('', {'title': 'hello', 'k2': 'v2'}, ignore_missing=True),
+                lifeboat=Lifeboat('lifeboat_123_arch.conf', {'title': 'world',
+                                  'k2': 'differentvalue'}, ignore_missing=True),
+                expected=False
+            ),
+            Test(
+                name="Configs with extra keys are not equivalent",
+                config=Config('', {'title': 'hello', 'k2': 'v2'}, ignore_missing=True),
+                lifeboat=Lifeboat('lifeboat_123_arch.conf', {'title': 'hello',
+                                  'k2': 'v2', 'k3': 'v3'}, ignore_missing=True),
+                expected=False
+            ),
+            Test(
+                name="Configs pointing to the exact efi file are equivalent",
+                config=Config('', {'efi': efi_path}, ignore_missing=True),
+                lifeboat=Lifeboat('lifeboat_123_arch.conf', {'efi': efi_path}, ignore_missing=True),
+                expected=True
+            ),
+            Test(
+                name="Configs pointing to different efi files with the same checksum are not equivalent",
+                config=Config('', {'efi': efi_path}, ignore_missing=True),
+                lifeboat=Lifeboat('lifeboat_123_arch.conf', {'efi': different_efi_path}, ignore_missing=True),
+                expected=False
+            ),
+            Test(
+                name="Configs with missing efi files are not equivalent",
+                config=Config('', {'efi': efi_path}, ignore_missing=True),
+                lifeboat=Lifeboat('lifeboat_123_arch.conf', {'efi': 'this_file_does_not_exist'}, ignore_missing=True),
+                expected=False
+            ),
+        ]
+        for test in tests:
+            with self.subTest(test['name']):
+                actual = test['lifeboat'].equivalent(test['config'])
+                self.assertEqual(test['expected'], actual)
 
     def create_loader(self, contents: str) -> str:
         loader_name = os.path.join(self.esp.name, 'loader', 'loader.conf')

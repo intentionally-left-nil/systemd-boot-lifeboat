@@ -6,6 +6,7 @@ from multiprocessing.sharedctypes import Value
 
 import datetime
 import errno
+import hashlib
 import os
 import re
 import shutil
@@ -51,6 +52,11 @@ def delete_file(filepath: str):
         os.remove(filepath)
     except OSError:
         pass
+
+
+def md5(filepath: str) -> str:
+    with open(filepath, 'rb') as fp:
+        return hashlib.md5(fp.read()).hexdigest()
 
 
 @total_ordering
@@ -101,6 +107,29 @@ class Lifeboat(Config):
 
     def __lt__(self, other) -> bool:
         return self.timestamp() < other.timestamp()
+
+    def equivalent(self, other: Config) -> bool:
+        ignore_keys = ['title']
+        compare_md5_keys = ['efi']
+
+        keys = [x for x in self.keys() if x not in ignore_keys]
+        other_keys = [x for x in other.keys() if x not in ignore_keys]
+
+        if len(keys) != len(other_keys):
+            return False
+
+        for key in keys:
+            if key not in other:
+                return False
+            elif key in compare_md5_keys:
+                try:
+                    if md5(self[key]) != md5(other[key]):
+                        return False
+                except FileNotFoundError:
+                    return False
+            elif self[key] != other[key]:
+                return False
+        return True
 
 
 def get_default_config(esp: str) -> typing.Optional[Config]:
