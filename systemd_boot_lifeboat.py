@@ -13,14 +13,22 @@ import shutil
 import time
 
 
-def main():
-    esp = os.environ.get('ESP', '/efi')
+def main(*, esp, max_lifeboats=2):
+    if max_lifeboats <= 1:
+        raise ValueError(f'max_lifeboats{max_lifeboats} must be > 1')
+
     config = get_default_config(esp)
     existing_lifeboats = Lifeboat.get_existing(esp)
     for lifeboat in existing_lifeboats:
         if lifeboat.equivalent(config):
             print(f'{config.basename()} is already backed up to {lifeboat.basename()}\n Nothing to do')
             return
+
+    while len(existing_lifeboats) >= max_lifeboats:
+        lifeboat = existing_lifeboats[0]
+        existing_lifeboats = existing_lifeboats[1:]
+        print(f'Deleting old lifeboat {lifeboat.basename}')
+        lifeboat.remove()
 
     now = int(time.time())
     lifeboat = Lifeboat.from_default_config(config, now)
@@ -57,7 +65,9 @@ class Config(OrderedDict[str, str]):
 
 
 def copy(src: str, target: str):
+    print(f'copying {src} to {target}')
     if os.path.exists(target):
+        print(f'target already exists: {target}')
         raise OSError(errno.EEXIST, os.strerror(errno.EEXIST))
     shutil.copy2(src, target)
     st = os.stat(src)
@@ -67,6 +77,7 @@ def copy(src: str, target: str):
 def delete_file(filepath: str):
     try:
         os.remove(filepath)
+        print(f'Removed {filepath}')
     except OSError:
         pass
 
@@ -126,6 +137,12 @@ class Lifeboat(Config):
 
     def __lt__(self, other) -> bool:
         return self.timestamp() < other.timestamp()
+
+    def remove(self):
+        if 'efi' in self:
+            delete_file(self['efi'])
+        delete_file(self.filepath)
+        self.clear()
 
     def equivalent(self, other: Config) -> bool:
         ignore_keys = ['title']
