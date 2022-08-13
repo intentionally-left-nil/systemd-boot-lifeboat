@@ -89,6 +89,14 @@ class TestConfig(unittest.TestCase):
         expected = [Lifeboat(now_conf_path), Lifeboat(past_conf_path)]
         self.assertListEqual(sorted(expected), sorted(actual))
 
+    def test_sort_by_timestamp(self):
+        now = int(time.time())
+        past = int(time.time()) - 1
+        past2 = int(time.time()) - 2
+        expected = [self.create_entry(Lifeboat.lifeboat_path('arch.conf', x), 'k v') for x in [past2, past, now]]
+        actual = [x.filepath for x in Lifeboat.get_existing(self.esp.name)]
+        self.assertListEqual(expected, actual)
+
     def create_loader(self, contents: str) -> str:
         loader_name = os.path.join(self.esp.name, 'loader', 'loader.conf')
         with open(loader_name, 'w', encoding='utf8') as fp:

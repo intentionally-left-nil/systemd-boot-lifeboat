@@ -2,9 +2,11 @@
 from __future__ import annotations
 import errno
 from functools import total_ordering
+from multiprocessing.sharedctypes import Value
 
 import os
 import typing
+import re
 from collections import OrderedDict
 import shutil
 
@@ -54,12 +56,19 @@ def delete_file(filepath: str):
 class Lifeboat(Config):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.timestamp()  # side effect to ensure the filepath is valid
+
+    def timestamp(self) -> int:
+        match = re.search(r'^lifeboat_(\d+)_', os.path.basename(self.filepath))
+        if match is None:
+            raise ValueError(f"{self.filepath} does not contain a timestamp")
+        return int(match.group(1))
 
     @classmethod
     def get_existing(cls, esp: str) -> list[Lifeboat]:
         config_dir = os.path.join(esp, 'loader', 'entries')
         config_paths = [os.path.join(config_dir, x) for x in os.listdir(config_dir) if x.startswith('lifeboat_')]
-        return [cls(x) for x in config_paths]
+        return sorted([cls(x) for x in config_paths])
 
     @classmethod
     def lifeboat_path(cls, filepath: str, ts: int) -> str:
@@ -87,7 +96,7 @@ class Lifeboat(Config):
         return self.filepath == other.filepath
 
     def __lt__(self, other) -> bool:
-        return self.filepath < other.filepath
+        return self.timestamp() < other.timestamp()
 
 
 def get_default_config(esp: str) -> typing.Optional[Config]:
