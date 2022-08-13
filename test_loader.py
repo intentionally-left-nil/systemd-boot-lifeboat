@@ -1,5 +1,6 @@
-import tempfile
+import datetime
 import os
+import tempfile
 import time
 import unittest
 
@@ -59,7 +60,10 @@ class TestConfig(unittest.TestCase):
 
         lifeboat = Lifeboat.from_default_config(c, now)
 
-        self.assertDictEqual({'title': 'my cool arch', 'efi': Lifeboat.lifeboat_path(efi_path, now)}, lifeboat)
+        now_date = datetime.datetime.fromtimestamp(lifeboat.timestamp()).strftime("%b %-d %Y")
+
+        self.assertDictEqual({'title': f'my cool arch@{now_date}',
+                             'efi': Lifeboat.lifeboat_path(efi_path, now)}, lifeboat)
         pass
 
     def test_create_lifeboat_cleans_up_if_writing_fails(self):

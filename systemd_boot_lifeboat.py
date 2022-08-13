@@ -1,14 +1,15 @@
 #!/usr/bin/env python
 from __future__ import annotations
-import errno
+from collections import OrderedDict
 from functools import total_ordering
 from multiprocessing.sharedctypes import Value
 
+import datetime
+import errno
 import os
-import typing
 import re
-from collections import OrderedDict
 import shutil
+import typing
 
 
 class Config(OrderedDict[str, str]):
@@ -80,6 +81,9 @@ class Lifeboat(Config):
     def from_default_config(cls, config: Config, ts: int) -> Lifeboat:
         lifeboat_name = cls.lifeboat_path(config.filepath, ts)
         lifeboat = cls(lifeboat_name, config, ignore_missing=True)
+        if 'title' in config:
+            date = datetime.datetime.fromtimestamp(lifeboat.timestamp()).strftime("%b %-d %Y")
+            lifeboat['title'] += f'@{date}'
         try:
             if 'efi' in config:
                 lifeboat['efi'] = cls.lifeboat_path(config['efi'], ts)
