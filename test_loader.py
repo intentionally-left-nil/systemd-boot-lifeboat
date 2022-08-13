@@ -3,7 +3,7 @@ import os
 import time
 import unittest
 
-from systemd_boot_lifeboat import Config, get_default_config
+from systemd_boot_lifeboat import Config, Lifeboat, get_default_config
 
 
 class TestConfig(unittest.TestCase):
@@ -30,12 +30,11 @@ class TestConfig(unittest.TestCase):
             with self.subTest(test[0]):
                 conf_path = self.create_entry(f'test_parse_config_{i}.conf', test[0])
                 c = Config(conf_path)
-                c.load()
                 self.assertDictEqual(test[1], c)
 
     def test_write_config(self):
         conf_name = os.path.join(self.esp.name, 'test_write_config.conf')
-        c = Config(conf_name, {'k': 'v', 'k2': 'v2'})
+        c = Config(conf_name, {'k': 'v', 'k2': 'v2'}, ignore_missing=True)
         c.write()
         with open(conf_name, 'r', encoding='utf8') as fp:
             self.assertEqual('k\tv\nk2\tv2\n', fp.read())
@@ -57,12 +56,10 @@ class TestConfig(unittest.TestCase):
 
         now = int(time.time())
         c = Config(entry_path)
-        c.load()
 
-        lifeboat = c.create_lifeboat(now)
+        lifeboat = Lifeboat.from_default_config(c, now)
 
-        self.assertDictEqual({'title': 'my cool arch', 'efi': os.path.join(
-            os.path.dirname(efi_path), f'lifeboat_{now}_linux.efi')}, lifeboat)
+        self.assertDictEqual({'title': 'my cool arch', 'efi': Lifeboat.lifeboat_path(efi_path, now)}, lifeboat)
         pass
 
     def test_create_lifeboat_cleans_up_if_writing_fails(self):
@@ -72,15 +69,25 @@ class TestConfig(unittest.TestCase):
             fp.write("my cool efi")
         entry_path = self.create_entry('arch.conf', f'title my cool arch\nefi {efi_path}')
         c = Config(entry_path)
-        c.load()
         now = int(time.time())
 
         # create the lifeboat file so that this will error out later
         self.create_entry(f'lifeboat_{now}_arch.conf', 'already exists')
-        self.assertRaises(OSError, lambda: c.create_lifeboat(now))
+        self.assertRaises(OSError, lambda: Lifeboat.from_default_config(c, now))
         # Make sure the lifeboat efi is cleaned up
         self.assertFalse(os.path.exists(os.path.join(self.esp.name, 'EFI', 'Arch', f'lifeboat_{now}_linux.efi')))
         pass
+
+    def test_get_existing(self):
+        now = int(time.time())
+        past = int(time.time()) - 101
+        self.create_entry('arch.conf', 'k v')
+        now_conf_path = self.create_entry(Lifeboat.lifeboat_path('arch.conf', now), 'k now')
+        past_conf_path = self.create_entry(Lifeboat.lifeboat_path('arch.conf', past), 'k past')
+
+        actual = Lifeboat.get_existing(self.esp.name)
+        expected = [Lifeboat(now_conf_path), Lifeboat(past_conf_path)]
+        self.assertListEqual(sorted(expected), sorted(actual))
 
     def create_loader(self, contents: str) -> str:
         loader_name = os.path.join(self.esp.name, 'loader', 'loader.conf')
