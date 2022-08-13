@@ -33,7 +33,9 @@ def main(*, esp, max_lifeboats):
 
     now = int(time.time())
     lifeboat = Lifeboat.from_default_config(config, now)
-    print(f'Created boot entry: {lifeboat.basename()}')
+    print(f'Created boot entry {lifeboat["title"]} with contents:')
+    for key, value in lifeboat.items():
+        print(f'{key}\t{value}')
 
 
 class Config(OrderedDict[str, str]):
