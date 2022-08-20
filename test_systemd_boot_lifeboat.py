@@ -1,265 +1,403 @@
-import datetime
+import dataclasses as dc
+from systemd_boot_lifeboat import Config, Chroot, ChrootException, FileTracker, pretty_date, main
+from multiprocessing.sharedctypes import Value
 import os
-import tempfile
-import time
+import shutil
+import re
+from tempfile import TemporaryDirectory
+from typing import Dict, Optional, TypedDict, Union
 import unittest
-
-from systemd_boot_lifeboat import Config, Lifeboat, get_default_config, main, md5
-from typing import TypedDict
+from unittest.mock import patch
 
 
 class TestConfig(unittest.TestCase):
-
     def setUp(self):
-        self.esp = tempfile.TemporaryDirectory()
-        os.makedirs(os.path.join(self.esp.name, 'loader', 'entries'), exist_ok=True)
-        super().setUp()
+        self.maxDiff = None
+        self.tmp = TemporaryDirectory()
+        self.reset()
+
+        if os.getuid() != 0:
+            self.skipTest('Must run unit tests as root')
+
+    def reset(self):
+        for filename in os.listdir(self.tmp.name):
+            filepath = os.path.join(self.tmp.name, filename)
+            if os.path.isfile(filepath):
+                os.remove(filepath)
+            else:
+                shutil.rmtree(filepath)
+        os.makedirs(os.path.join(self.tmp.name, 'loader', 'entries'), exist_ok=True)
+        os.makedirs(os.path.join(self.tmp.name, 'EFI', 'Arch'), exist_ok=True)
 
     def tearDown(self) -> None:
-        self.esp.cleanup()
+        self.tmp.cleanup()
         super().tearDown()
 
-    def test_parse_config(self):
-        tests = [('', {}),
-                 ('onecolbad', {}),
-                 ('three cols ok', {'three': 'cols ok'}),
-                 ('mykey myval', {'mykey': 'myval'}),
-                 ('k v\n#commentkey v2', {'k': 'v'}),
-                 ('k v\n# commentkey v2', {'k': 'v'}),
-                 ('k v\nk\tv2\n k3    v3', {'k': 'v2', 'k3': 'v3'}),
-                 ]
-        for i, test in enumerate(tests):
-            with self.subTest(test[0]):
-                conf_path = self.create_entry(f'test_parse_config_{i}.conf', test[0])
-                c = Config(conf_path)
-                self.assertDictEqual(test[1], c)
-
-    def test_write_config(self):
-        conf_name = os.path.join(self.esp.name, 'test_write_config.conf')
-        c = Config(conf_name, {'k': 'v', 'k2': 'v2'}, ignore_missing=True)
-        c.write()
-        with open(conf_name, 'r', encoding='utf8') as fp:
-            self.assertEqual('k\tv\nk2\tv2\n', fp.read())
-
-    def test_get_default_config(self):
-        self.create_entry('arch.conf', 'k v')
-        self.create_loader('missingdefault notarch')
-        self.assertRaises(ValueError, lambda: get_default_config(self.esp.name))
-
-        self.create_loader('default arch')
-        self.assertEqual({'k': 'v'}, get_default_config(self.esp.name))
+    def test_from_bootctl(self):
+        class Test(TypedDict):
+            name: str
+            input: Dict[str, Union[str, list[str]]]
+            expected: Config
+        tests: list[Test] = [
+            Test(
+                name="default entry",
+                input={"id": "arch.conf", "path": "/efi/loader/entries/arch.conf", "root": "/efi",
+                       "title": "Arch Linux", "showTitle": "Arch Linux", "efi": "/EFI/Arch/linux.efi"},
+                expected=Config(path="/efi/loader/entries/arch.conf", root="/efi", title=['Arch Linux'], efi=["/EFI/Arch/linux.efi"])),
+            Test(
+                name="multiple initrd",
+                input={"id": "arch.conf", "path": "/efi/loader/entries/arch.conf", "root": "/efi",
+                       "title": "Arch Linux", "showTitle": "Arch Linux", "linux": "vmlinuz-linux", "initrd": ["intel-ucode.img", "amd-ucode.img"]},
+                expected=Config(path="/efi/loader/entries/arch.conf", root="/efi", title=['Arch Linux'], linux=["vmlinuz-linux"], initrd=["intel-ucode.img", "amd-ucode.img"])),
+            Test(
+                name="sort key",
+                input={"id": "arch.conf", "path": "/efi/loader/entries/arch.conf", "root": "/efi", "sortKey": "test"},
+                expected=Config(path="/efi/loader/entries/arch.conf", root="/efi", sort_key=["test"])),
+        ]
+        for test in tests:
+            with self.subTest(test['name']):
+                self.assertEqual(test['expected'], Config.from_bootctl(test['input']))
 
     def test_create_lifeboat(self):
-        efi_path = self.create_efi('linux.efi', 'my cool efi')
-        entry_path = self.create_entry('arch.conf', f'title my cool arch\nefi {efi_path}')
-
-        now = int(time.time())
-        c = Config(entry_path)
-
-        lifeboat = Lifeboat.from_default_config(c, now)
-
-        self.assertDictEqual({'title': f'my cool arch@{lifeboat.pretty_date()}',
-                             'efi': Lifeboat.lifeboat_path(efi_path, now)}, lifeboat)
-        pass
-
-    def test_create_lifeboat_cleans_up_if_writing_fails(self):
-        efi_path = self.create_efi('linux.efi', 'my cool efi')
-        entry_path = self.create_entry('arch.conf', f'title my cool arch\nefi {efi_path}')
-        c = Config(entry_path)
-        now = int(time.time())
-
-        # create the lifeboat file so that this will error out later
-        self.create_entry(f'lifeboat_{now}_arch.conf', 'already exists')
-        self.assertRaises(OSError, lambda: Lifeboat.from_default_config(c, now))
-        # Make sure the lifeboat efi is cleaned up
-        self.assertFalse(os.path.exists(os.path.join(self.esp.name, 'EFI', 'Arch', f'lifeboat_{now}_linux.efi')))
-        pass
-
-    def test_get_existing(self):
-        now = int(time.time())
-        past = int(time.time()) - 101
-        self.create_entry('arch.conf', 'k v')
-        now_conf_path = self.create_entry(Lifeboat.lifeboat_path('arch.conf', now), 'k now')
-        past_conf_path = self.create_entry(Lifeboat.lifeboat_path('arch.conf', past), 'k past')
-
-        actual = Lifeboat.get_existing(self.esp.name)
-        expected = [Lifeboat(now_conf_path), Lifeboat(past_conf_path)]
-        self.assertListEqual(sorted(expected), sorted(actual))
-
-    def test_sort_by_timestamp(self):
-        now = int(time.time())
-        past = int(time.time()) - 1
-        past2 = int(time.time()) - 2
-        expected = [self.create_entry(Lifeboat.lifeboat_path('arch.conf', x), 'k v') for x in [past2, past, now]]
-        actual = [x.filepath for x in Lifeboat.get_existing(self.esp.name)]
-        self.assertListEqual(expected, actual)
-
-    def test_equivalent(self):
-        efi_path = self.create_efi('linux.efi', 'my cool efi')
-        efi_copy_path = self.create_efi('linux_copy.efi', 'my cool efi')
-        different_efi_path = self.create_efi('linux_other.efi', 'some other efi')
+        ts = 12345
 
         class Test(TypedDict):
             name: str
             config: Config
-            lifeboat: Lifeboat
+            expected: Config
+
+        tests: list[Test] = [
+            Test(
+                name="efi entry",
+                config=Config(path=os.path.join(self.tmp.name, "loader/entries/arch.conf"), root=self.tmp.name,
+                              title=['Arch Linux'], efi=["/EFI/Arch/linux.efi"], sort_key=["linux"], version=["linux5.19"], autosave=True),
+                expected=Config(path=os.path.join(self.tmp.name, "loader/entries/lifeboat_12345_arch.conf"), root=self.tmp.name,
+                                title=[f'Arch Linux @{pretty_date(ts)}'], efi=["/EFI/Arch/lifeboat_12345_linux.efi"], sort_key=["linux"], version=["-linux5.19-12345"])
+            ),
+            Test(
+                name="simple linux entry",
+                config=Config(path=os.path.join(self.tmp.name, "loader/entries/arch.conf"), root=self.tmp.name,
+                              title=['Arch Linux'], linux=['/vmlinuz-linux'], initrd=['/initramfs-linux.img'], sort_key=["linux"], version=["linux5.19"], autosave=True),
+                expected=Config(path=os.path.join(self.tmp.name, "loader/entries/lifeboat_12345_arch.conf"), root=self.tmp.name,
+                                title=[f'Arch Linux @{pretty_date(ts)}'], linux=["/lifeboat_12345_vmlinuz-linux"], initrd=["/lifeboat_12345_initramfs-linux.img"], sort_key=["linux"], version=["-linux5.19-12345"])
+            ),
+            Test(
+                name="linux with multiple initrd",
+                config=Config(path=os.path.join(self.tmp.name, "loader/entries/arch.conf"), root=self.tmp.name,
+                              title=['Arch Linux'], linux=['/vmlinuz-linux'],
+                              initrd=['/initramfs-linux.img',
+                                      '/intel-ucode.img', '/amd-ucode.img'],
+                              sort_key=["linux"], version=["linux5.19"], autosave=True),
+                expected=Config(path=os.path.join(self.tmp.name, "loader/entries/lifeboat_12345_arch.conf"), root=self.tmp.name,
+                                title=[f'Arch Linux @{pretty_date(ts)}'], linux=["/lifeboat_12345_vmlinuz-linux"],
+                                initrd=["/lifeboat_12345_initramfs-linux.img",
+                                        "/lifeboat_12345_intel-ucode.img", '/lifeboat_12345_amd-ucode.img'],
+                                sort_key=["linux"], version=["-linux5.19-12345"])
+            )
+        ]
+        for test in tests:
+            with self.subTest(test['name']):
+                self.reset()
+                with open(os.path.join(self.tmp.name, 'EFI', 'Arch', 'linux.efi'), 'w') as fp:
+                    fp.write('my cool efi')
+
+                with open(os.path.join(self.tmp.name, 'vmlinuz-linux'), 'w') as fp:
+                    fp.write('my cool /linux')
+
+                with open(os.path.join(self.tmp.name, 'initramfs-linux.img'), 'w') as fp:
+                    fp.write('my cool /initramfs-linux.img')
+
+                with open(os.path.join(self.tmp.name, 'intel-ucode.img'), 'w') as fp:
+                    fp.write('my cool /intel-ucode.img')
+
+                with open(os.path.join(self.tmp.name, 'amd-ucode.img'), 'w') as fp:
+                    fp.write('my cool /amd-ucode.img')
+
+                self.assertEqual(test['expected'], dc.replace(test['config'].create_lifeboat(ts), autosave=False))
+
+                if test['config'].efi:
+                    with open('/'.join([test['expected'].root, test['expected'].efi[0]]), encoding='utf8') as fp:
+                        self.assertEqual('my cool efi', fp.read())
+
+                if test['config'].linux:
+                    with open('/'.join([test['expected'].root, test['expected'].linux[0]]), encoding='utf8') as fp:
+                        self.assertEqual('my cool /linux', fp.read())
+
+                for name, path in zip(test['config'].initrd, test['expected'].initrd):
+                    with open('/'.join([test['expected'].root, path]), encoding='utf8') as fp:
+                        self.assertEqual(f'my cool {name}', fp.read())
+
+    def test_equivalent(self):
+        with open(os.path.join(self.tmp.name, 'EFI', 'Arch', 'linux.efi'), 'w') as fp:
+            fp.write('my cool efi')
+        with open(os.path.join(self.tmp.name, 'EFI', 'Arch', 'lifeboat_12345_linux.efi'), 'w') as fp:
+            fp.write('my cool efi')
+        with open(os.path.join(self.tmp.name, 'EFI', 'Arch', 'different.efi'), 'w') as fp:
+            fp.write('my other efi')
+
+        default_config = Config(path=os.path.join(self.tmp.name, "loader/entries/arch.conf"), root=self.tmp.name,
+                                title=['Arch Linux'], efi=["/EFI/Arch/linux.efi"])
+
+        class Test(TypedDict):
+            name: str
+            config: Config
+            compare: Config
             expected: bool
         tests: list[Test] = [
             Test(
                 name="identical configs are equivalent",
-                config=Config('', {'k': 'v', 'k2': 'v2'}, ignore_missing=True),
-                lifeboat=Lifeboat('lifeboat_123_arch.conf', {'k': 'v', 'k2': 'v2'}, ignore_missing=True),
+                config=default_config,
+                compare=default_config,
                 expected=True
             ),
             Test(
-                name="Configs with different titles are equivalent",
-                config=Config('', {'title': 'hello', 'k2': 'v2'}, ignore_missing=True),
-                lifeboat=Lifeboat('lifeboat_123_arch.conf', {'title': 'world', 'k2': 'v2'}, ignore_missing=True),
+                name="configs with different titles are equivalent",
+                config=default_config,
+                compare=dc.replace(default_config, title=["my new title"]),
                 expected=True
             ),
             Test(
-                name="Configs with different values are not equivalent",
-                config=Config('', {'title': 'hello', 'k2': 'v2'}, ignore_missing=True),
-                lifeboat=Lifeboat('lifeboat_123_arch.conf', {'title': 'world',
-                                  'k2': 'differentvalue'}, ignore_missing=True),
+                name="configs with different values are not",
+                config=default_config,
+                compare=dc.replace(default_config, options=["123"]),
                 expected=False
             ),
             Test(
-                name="Configs with extra keys are not equivalent",
-                config=Config('', {'title': 'hello', 'k2': 'v2'}, ignore_missing=True),
-                lifeboat=Lifeboat('lifeboat_123_arch.conf', {'title': 'hello',
-                                  'k2': 'v2', 'k3': 'v3'}, ignore_missing=True),
-                expected=False
-            ),
-            Test(
-                name="Configs pointing to the exact efi file are equivalent",
-                config=Config('', {'efi': efi_path}, ignore_missing=True),
-                lifeboat=Lifeboat('lifeboat_123_arch.conf', {'efi': efi_path}, ignore_missing=True),
+                name="configs pointing to the same efi file are equivalent",
+                config=default_config,
+                compare=dc.replace(default_config, path=os.path.join(
+                    self.tmp.name, "loader/entries/lifeboat_12345_arch.conf")),
                 expected=True
             ),
             Test(
-                name="Configs pointing to different efi files with the same checksum are equivalent",
-                config=Config('', {'efi': efi_path}, ignore_missing=True),
-                lifeboat=Lifeboat('lifeboat_123_arch.conf', {'efi': efi_copy_path}, ignore_missing=True),
-                expected=True
-            ),
-            Test(
-                name="Configs pointing to different efi files with differnt checksum are not equivalent",
-                config=Config('', {'efi': efi_path}, ignore_missing=True),
-                lifeboat=Lifeboat('lifeboat_123_arch.conf', {'efi': different_efi_path}, ignore_missing=True),
+                name="configs pointing to different efi files with the different md5 are not equivalent",
+                config=default_config,
+                compare=dc.replace(default_config, efi=['/EFI/Arch/different.efi']),
                 expected=False
             ),
-            Test(
-                name="Configs with missing efi files are not equivalent",
-                config=Config('', {'efi': efi_path}, ignore_missing=True),
-                lifeboat=Lifeboat('lifeboat_123_arch.conf', {'efi': 'this_file_does_not_exist'}, ignore_missing=True),
-                expected=False
-            ),
+            Test(name="configs missing files are not equivalent",
+                 config=default_config,
+                 compare=dc.replace(default_config, efi=[]),
+                 expected=False
+                 ),
+
         ]
         for test in tests:
             with self.subTest(test['name']):
-                actual = test['lifeboat'].equivalent(test['config'])
+                actual = test['config'].equivalent(test['compare'])
                 self.assertEqual(test['expected'], actual)
 
+
+class TestChroot(unittest.TestCase):
+    def setUp(self):
+        self.maxDiff = None
+        self.tmp = TemporaryDirectory()
+        self.tmp2 = TemporaryDirectory()
+        os.makedirs(os.path.join(self.tmp.name, 'a', 'b', 'c'), exist_ok=True)
+        os.makedirs(os.path.join(self.tmp2.name, 'a', 'b', 'c'), exist_ok=True)
+        for path in ['a/a.txt', 'a/b/b.txt', 'a/b/c/c.txt']:
+            with open(os.path.join(self.tmp.name, path), 'w', encoding='utf8') as fp:
+                fp.write(path)
+            with open(os.path.join(self.tmp2.name, path), 'w', encoding='utf8') as fp:
+                fp.write(path)
+
+        if os.getuid() != 0:
+            self.skipTest('Must run unit tests as root')
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+        self.tmp2.cleanup()
+        super().tearDown()
+
+    def test_chroot(self):
+        tests: list[list[str]] = [
+            ['/'],
+            ['tmp'],
+            ['tmp', 'tmp/a'],
+            ['tmp/a', 'tmp'],
+            ['tmp', 'tmp'],
+            ['tmp', 'tmp/a', 'tmp/a/b'],
+            ['tmp', 'tmp/a/b', 'tmp/a'],
+            ['tmp', 'tmp2'],
+            ['tmp', 'tmp2', 'tmp2/a', 'tmp/a'],
+        ]
+        for test in tests:
+            with self.subTest(test):
+                roots = []
+                for path in test:
+                    if path.startswith('tmp2'):
+                        roots.append(self.tmp2.name + path[4:])
+                    elif path.startswith('tmp'):
+                        roots.append(self.tmp.name + path[3:])
+                initial_fd_count = fd_count()
+                expected_inodes = [inode(x) for x in roots]
+                expected_inodes_after_exit = [x for x in reversed(expected_inodes[:-1])]
+                expected_inodes_after_exit.append(inode('/'))
+                chroots = [Chroot(x) for x in roots]
+
+                for chroot, expected_inode in zip(chroots, expected_inodes):
+                    chroot.__enter__()
+                    self.assertEqual(expected_inode, inode('/'))
+                    pass
+
+                for chroot, expected_inode in zip(reversed(chroots), expected_inodes_after_exit):
+                    chroot.__exit__(None, None, None)
+                    self.assertEqual(expected_inode, inode('/'))
+
+                self.assertEqual(initial_fd_count, fd_count())
+                pass
+
+
+class TestFileTracker(unittest.TestCase):
+    def setUp(self):
+        self.maxDiff = None
+        self.tmp = TemporaryDirectory()
+        if os.getuid() != 0:
+            self.skipTest('Must run unit tests as root')
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+        super().tearDown()
+
+    def test_no_op_without_exception(self):
+        filepath = os.path.join(self.tmp.name, 'a.txt')
+        with FileTracker() as tracker:
+            tracker.track(filepath)
+            with open(filepath, 'w', encoding='utf8') as fp:
+                fp.write('hello')
+
+        with open(filepath, 'r', encoding='utf8') as fp:
+            self.assertEqual('hello', fp.read())
+
+    def test_deletes_files_when_exception(self):
+        a_path = os.path.join(self.tmp.name, 'a.txt')
+        b_path = os.path.join(self.tmp.name, 'b.txt')
+        with open(a_path, 'w', encoding='utf8') as fp:
+            fp.write('hello')
+        with open(b_path, 'w', encoding='utf8') as fp:
+            fp.write('hello')
+
+        def run_test():
+            with FileTracker() as tracker:
+                with Chroot(self.tmp.name):
+                    tracker.track('a.txt')
+                    tracker.track('b.txt')
+                    tracker.track('c.txt')
+                    raise ValueError('oh no')
+        self.assertRaises(ValueError, run_test)
+        self.assertEqual(0, len(os.listdir(self.tmp.name)))
+
+    def test_does_nothing_when_handling_chroot_exception(self):
+        a_path = os.path.join(self.tmp.name, 'a.txt')
+        with open(a_path, 'w', encoding='utf8') as fp:
+            fp.write('hello')
+
+        def run_test():
+            with FileTracker() as tracker:
+                with Chroot(self.tmp.name):
+                    tracker.track('a.txt')
+                    raise ChrootException('oh no')
+        self.assertRaises(ChrootException, run_test)
+        with open(a_path, 'r', encoding='utf8') as fp:
+            self.assertEqual('hello', fp.read())
+
+
+def fd_count() -> int: return len(os.listdir("/proc/self/fd")) - 1
+def inode(path) -> int: return os.stat(path).st_ino
+
+
+class TestEndToEnd(unittest.TestCase):
+    def setUp(self):
+        self.maxDiff = None
+        self.tmp = TemporaryDirectory()
+        os.makedirs(os.path.join(self.tmp.name, 'loader', 'entries'), exist_ok=True)
+        os.makedirs(os.path.join(self.tmp.name, 'EFI', 'Arch'), exist_ok=True)
+
+        if os.getuid() != 0:
+            self.skipTest('Must run unit tests as root')
+
+        self.patcher = patch('systemd_boot_lifeboat.get_bootctl_entries', lambda *args,
+                             **kwargs: self.mock_bootctl_entries(*args, **kwargs))
+        self.patcher.start()
+
+        self.ts = 12345
+        self.nowpatcher = patch('systemd_boot_lifeboat.now', lambda: self.ts)
+        self.nowpatcher.start()
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+        self.patcher.stop()
+        self.nowpatcher.stop()
+        super().tearDown()
+
     def test_end_to_end(self):
-        efi_path = self.create_efi('linux.efi', 'my cool efi')
-        efi_md5 = md5(efi_path)
-        first_lifeboat_md5 = efi_md5
-        loader_path = self.create_loader('default arch')
-        loader_md5 = md5(loader_path)
-        entry_path = self.create_entry('arch.conf', f'''
-title Arch Linux
-efi {efi_path}
-''')
-        entry_md5 = md5(entry_path)
+        with open(os.path.join(self.tmp.name, 'EFI', 'Arch', 'linux.efi'), 'w') as fp:
+            fp.write('my cool efi')
+        default_config = Config(path=os.path.join(self.tmp.name, "loader/entries/arch.conf"), root=self.tmp.name,
+                                title=['Arch Linux'], efi=["/EFI/Arch/linux.efi"], autosave=True)
+        expected_default_config = Config(path=os.path.join(self.tmp.name, "loader/entries/arch.conf"), root=self.tmp.name,
+                                         title=['Arch Linux'], efi=["/EFI/Arch/linux.efi"], version=["version123"], sort_key=["linux"])
 
-        config = get_default_config(self.esp.name)
+        def runner(default_config_path=default_config.path, max_lifeboats=2):
+            main(esp_path=self.tmp.name, boot_path=self.tmp.name, default_sort_key='linux',
+                 default_version='version123', max_lifeboats=max_lifeboats, default_config_path=default_config_path)
 
-        def ensure_config_untouched():
-            self.assertEqual(efi_md5, md5(efi_path))
-            self.assertEqual(loader_md5, md5(loader_path))
-            self.assertEqual(entry_md5, md5(entry_path))
+        # Verify the initial lifeboat gets created
+        runner()
+        self.assertEqual(expected_default_config, self.load_config(expected_default_config.path))
+        first_lifeboat = self.load_config(os.path.join(self.tmp.name, 'loader/entries/lifeboat_12345_arch.conf'))
+        self.assertListEqual(sorted([expected_default_config, first_lifeboat]),
+                             sorted(self.mock_bootctl_entries(esp_path=None)))
+        self.assertTrue(first_lifeboat.equivalent(expected_default_config))
+        with open(os.path.join(self.tmp.name, 'EFI', 'Arch', 'lifeboat_12345_linux.efi'), 'r', encoding='utf8') as fp:
+            self.assertEqual("my cool efi", fp.read())
 
-        # First run, create first lifeboat
-        main(esp=self.esp.name, max_lifeboats=2, default_sort_key='linux', default_version='archy')
-        new_config = get_default_config(self.esp.name)
-        self.assertEqual('linux', new_config['sort-key'])
-        self.assertEqual('archy', new_config['version'])
-        config = new_config
-        entry_md5 = md5(entry_path)
+        self.ts = 12346
+        # Now, try using the lifeboat config as the default and make sure main() throws
+        self.assertRaises(ValueError, lambda: runner(default_config_path=first_lifeboat.path))
+        self.ts = 12347
 
-        lifeboats = Lifeboat.get_existing(self.esp.name)
-        self.assertTrue(len(lifeboats) == 1)
-        first_lifeboat = lifeboats[0]
-        new_efi_path = lifeboats[0]['efi']
-        self.assertEqual(efi_md5, md5(new_efi_path))
-        self.assertTrue(first_lifeboat.equivalent(config))
+        # Calling the runner when the efi has changed should result in no changes
+        runner()
+        self.assertListEqual(sorted([expected_default_config, first_lifeboat]),
+                             sorted(self.mock_bootctl_entries(esp_path=None)))
 
-        time.sleep(1)  # Sleep to ensure the next time we run, the timestamp is different
+        # Now if the efi file changes, we should create a new entry
+        with open(os.path.join(self.tmp.name, 'EFI', 'Arch', 'linux.efi'), 'w') as fp:
+            fp.write('my cool efi2')
+        self.ts = 12348
+        runner()
+        second_lifeboat = self.load_config(os.path.join(self.tmp.name, 'loader/entries/lifeboat_12348_arch.conf'))
+        self.assertListEqual(sorted([expected_default_config, first_lifeboat, second_lifeboat]),
+                             sorted(self.mock_bootctl_entries(esp_path=None)))
+        with open(os.path.join(self.tmp.name, 'EFI', 'Arch', 'lifeboat_12348_linux.efi'), 'r', encoding='utf8') as fp:
+            self.assertEqual("my cool efi2", fp.read())
 
-        # Second run, no change
-        main(esp=self.esp.name, max_lifeboats=2, default_sort_key='linux', default_version='archy')
-        ensure_config_untouched()
-        lifeboats = Lifeboat.get_existing(self.esp.name)
-        self.assertTrue(len(lifeboats) == 1)
+        # If the efi file changes again, we should create a new entry and delete the oldest lifeboat
+        with open(os.path.join(self.tmp.name, 'EFI', 'Arch', 'linux.efi'), 'w') as fp:
+            fp.write('my cool efi3')
+        self.ts = 12349
+        runner()
+        third_lifeboat = self.load_config(os.path.join(self.tmp.name, 'loader/entries/lifeboat_12349_arch.conf'))
+        self.assertListEqual(sorted([expected_default_config, second_lifeboat, third_lifeboat]),
+                             sorted(self.mock_bootctl_entries(esp_path=None)))
+        self.assertTrue(third_lifeboat.equivalent(expected_default_config))
 
-        # Third run, efi is different - create second lifeboat
-        self.create_efi('linux.efi', 'new_efi')
-        efi_md5 = md5(efi_path)
-        second_lifeboat_md5 = efi_md5
-        time.sleep(1)
-        main(esp=self.esp.name, max_lifeboats=2, default_sort_key='linux', default_version='archy')
-        ensure_config_untouched()
-        lifeboats = Lifeboat.get_existing(self.esp.name)
-        self.assertTrue(len(lifeboats) == 2)
-        self.assertTrue(lifeboats[0].equivalent(first_lifeboat))
-        self.assertFalse(lifeboats[0].equivalent(config))
-        self.assertEqual(first_lifeboat_md5, md5(lifeboats[0]['efi']))
+    def load_config(self, filepath: str) -> Config:
+        config = Config(path=filepath, root=self.tmp.name, autosave=False)
+        with open(filepath, 'r', encoding='utf8') as fp:
+            for line in fp.readlines():
+                key, val = line.strip().split(maxsplit=1)
+                key = re.sub('-', '_', key).lower()
+                existing = getattr(config, key)
+                existing.append(val)
+        return config
 
-        second_lifeboat = lifeboats[1]
-
-        self.assertTrue(second_lifeboat.equivalent(config))
-        self.assertEqual(second_lifeboat_md5, md5(second_lifeboat['efi']))
-
-        # Fourth run, efi is different. Delete the first_lifeboat and create the third_lifeboat
-        self.create_efi('linux.efi', 'new_efi2')
-        efi_md5 = md5(efi_path)
-        third_lifeboat_md5 = efi_md5
-        time.sleep(1)
-        main(esp=self.esp.name, max_lifeboats=2, default_sort_key='linux', default_version='archy')
-        ensure_config_untouched()
-        lifeboats = Lifeboat.get_existing(self.esp.name)
-        self.assertTrue(len(lifeboats) == 2)
-        self.assertTrue(lifeboats[0].equivalent(second_lifeboat))
-        self.assertFalse(lifeboats[0].equivalent(config))
-
-        third_lifeboat = lifeboats[1]
-        self.assertTrue(third_lifeboat.equivalent(config))
-        self.assertEqual(third_lifeboat_md5, md5(third_lifeboat['efi']))
-
-        # Make sure the first lifeboat got deleted
-        self.assertFalse(os.path.exists(first_lifeboat.filepath))
-        self.assertFalse(os.path.exists(first_lifeboat['efi']))
-
-    def create_loader(self, contents: str) -> str:
-        loader_name = os.path.join(self.esp.name, 'loader', 'loader.conf')
-        with open(loader_name, 'w', encoding='utf8') as fp:
-            fp.write(contents)
-        return loader_name
-
-    def create_entry(self, name: str, contents: str) -> str:
-        conf_name = os.path.join(self.esp.name, 'loader', 'entries', name)
-        with open(conf_name, 'w', encoding='utf8') as fp:
-            fp.write(contents)
-        return conf_name
-
-    def create_efi(self, name: str, contents: str) -> str:
-        efi_path = os.path.join(self.esp.name, 'EFI', 'Arch', name)
-        os.makedirs(os.path.dirname(efi_path), exist_ok=True)
-        with open(efi_path, 'w', encoding='utf8') as fp:
-            fp.write(contents)
-        return efi_path
+    def mock_bootctl_entries(self, esp_path, boot_path=None):
+        filepaths = [os.path.join(self.tmp.name, 'loader', 'entries', name)
+                     for name in os.listdir(os.path.join(self.tmp.name, 'loader', 'entries'))]
+        return [self.load_config(x) for x in filepaths]
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

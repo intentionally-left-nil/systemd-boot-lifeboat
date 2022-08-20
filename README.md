@@ -2,8 +2,6 @@
 
 Automatically backup your bootloader entries to a backup configuration, for easy restoration.
 
-Note: This only currently works for unified kernel images (using efi= in your loader). Support for linux= coming later :)
-
 # Example
 
 ```
@@ -42,10 +40,48 @@ sudo systemctl enable systemd-boot-lifeboat.service
 
 # Configuration options
 
+The main flags to change are the `--esp-path` if your config is not mounted at /efi
+and `--default-config-path` to hardcode the name of the config you want backed up (e.g. `/efi/loader/entries/arch.conf`)
+
+If you are using the provided `systemd-boot-lifeboat.service`, you can customize these options by creating a drop-in file.
+Simply run `sudo systemctl edit systemd-boot-lifeboat.service` and add the following to your override.conf:
+
+```
+[Service]
+ExecStart=
+ExecStart=/usr/share/systemd-boot-lifeboat/systemd_boot_lifeboat.py --your-flags-here
+```
+
+You need the `ExecStart=` to clear out the service's default ExecStart
+
+```
+usage: systemd_boot_lifeboat.py [-h] [-n MAX_LIFEBOATS] [-e ESP_PATH] [-b BOOT_PATH] [--default-sort-key DEFAULT_SORT_KEY]
+                                [--default-version DEFAULT_VERSION] [-c DEFAULT_CONFIG_PATH] [--dry-run]
+
+Clone the boot entry if it has changed
+
+options:
+  -h, --help            show this help message and exit
+  -n MAX_LIFEBOATS, --max-lifeboats MAX_LIFEBOATS
+  -e ESP_PATH, --esp-path ESP_PATH
+                        Directory of the efi system partition (default: /efi)
+  -b BOOT_PATH, --boot-path BOOT_PATH
+                        Directory of the efi system partition (default: None)
+  --default-sort-key DEFAULT_SORT_KEY
+                        Default sort key to use, if not present (default: linux)
+  --default-version DEFAULT_VERSION
+                        Default sort key to use, if not present (default: uname -a)
+  -c DEFAULT_CONFIG_PATH, --default-config-path DEFAULT_CONFIG_PATH
+                        Fully qualified location to the conf file to use as a template for creating new lifeboats (default: None)
+  --dry-run             Print what would actually happen, but take no action (default: False)
+```
+
 By default, systemd-boot-lifeboat looks in the `/efi` directory for your ESP, and keeps the previous two entries backed up. You can change this by passing in --efi and --max_backups to the python script. To make this change, you need to type `systemctl edit systemd-boot-lifeboat.service` and modify the command line as appropriate
 
 # Development
 
 1. Clone the repository
 1. ln -s $PWD/pre-commit $PWD/.git/hooks/
-1. Run the unit tests `python -m unittest -v `
+1. Run the unit tests `sudo python -m unittest -v `
+
+The unit tests have to be run as root, unfortunately, due to the extensive use of chroot.
