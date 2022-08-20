@@ -29,7 +29,7 @@ Created boot entry: lifeboat_1660426748_arch_signed.conf
 ```sh
 git clone https://github.com/intentionally-left-nil/systemd-boot-lifeboat.git
 cd systemd-boot-lifeboat
-makepkg -si
+makepkg -si -p PKGBUILD.dev
 sudo systemctl enable systemd-boot-lifeboat.service
 ```
 
