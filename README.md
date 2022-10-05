@@ -1,5 +1,7 @@
 # Systemd-boot-lifeboat
 
+[![CI](https://github.com/intentionally-left-nil/systemd-boot-lifeboat/actions/workflows/test.yml/badge.svg)](https://github.com/intentionally-left-nil/systemd-boot-lifeboat/actions/workflows/test.yml)
+
 Automatically backup your bootloader entries to a backup configuration, for easy restoration.
 
 # Example
@@ -27,7 +29,7 @@ Created boot entry: lifeboat_1660426748_arch_signed.conf
 # Installation (Arch-derived OS)
 
 1. Install from [https://aur.archlinux.org/packages/systemd-boot-lifeboat](AUR)
-1. Enable with `systemctl enable systemd-boot-lifeboat.service
+1. Enable with `systemctl enable systemd-boot-lifeboat.service`
 
 # Manual Installation
 
