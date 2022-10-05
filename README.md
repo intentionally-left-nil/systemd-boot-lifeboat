@@ -26,12 +26,8 @@ Created boot entry: lifeboat_1660426748_arch_signed.conf
 
 # Installation (Arch-derived OS)
 
-```sh
-git clone https://github.com/intentionally-left-nil/systemd-boot-lifeboat.git
-cd systemd-boot-lifeboat
-makepkg -si -p PKGBUILD.dev
-sudo systemctl enable systemd-boot-lifeboat.service
-```
+1. Install from [https://aur.archlinux.org/packages/systemd-boot-lifeboat](AUR)
+1. Enable with `systemctl enable systemd-boot-lifeboat.service
 
 # Manual Installation
 
@@ -83,5 +79,7 @@ By default, systemd-boot-lifeboat looks in the `/efi` directory for your ESP, an
 1. Clone the repository
 1. ln -s $PWD/pre-commit $PWD/.git/hooks/
 1. Run the unit tests `sudo python -m unittest -v `
+1. install with makepkg -si -p PKGBUILD.dev
+1. sudo systemctl enable systemd-boot-lifeboat.service
 
 The unit tests have to be run as root, unfortunately, due to the extensive use of chroot.
