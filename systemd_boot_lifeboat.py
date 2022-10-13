@@ -176,13 +176,10 @@ class Config:
             raise ValueError(f'Could not save config {self.basename()}') from e
 
     def remove(self):
-        with Chroot(self.root):
-            (
-                delete_file(item) for field in Config.FIELDS_WITH_FILES
-                for item in getattr(self, field)
-            )
-        with Chroot('/'):
-            delete_file(self.path)
+        for field in Config.FIELDS_WITH_FILES:
+            for file in getattr(self, field):
+                delete_file(self.root, file)
+        delete_file('/', self.path)
 
     def _md5(self, filepath) -> str:
         with Chroot(self.root):
@@ -289,8 +286,7 @@ class FileTracker:
     ) -> Optional[bool]:
         if exc is not None and not isinstance(exc, ChrootException):
             for file in self.files:
-                with Chroot(file.root):
-                    delete_file(file.path)
+                delete_file(file.root, file.path)
         return False
 
 
@@ -344,16 +340,22 @@ def copy_file(src: str, dest: str):
         raise ValueError(f'Error copying {os.path.basename(src)} to {os.path.basename(dest)} failed') from e
 
 
-def delete_file(filepath: str):
-    global DRY_RUN
-    if DRY_RUN:
-        print(f'--dry-run prevents deleting {filepath}')
+def delete_file(root: str, filepath: str):
+    if not filepath:
+        print(f'Refusing to delete empty file at {root}')
         return
-    try:
-        os.remove(filepath)
-        print(f'Removed {filepath}')
-    except OSError:
-        pass
+
+    with Chroot(root):
+        global DRY_RUN
+        if DRY_RUN:
+            print(f'--dry-run prevents deleting {root}:{filepath}')
+            return
+        try:
+            os.remove(filepath)
+            print(f'Removed {root}:{filepath}')
+        except OSError as e:
+            print(f'Error {e} removing {root}:{filepath}, continuing')
+            pass
 
 
 if __name__ == '__main__':

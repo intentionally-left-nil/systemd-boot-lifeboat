@@ -1,5 +1,5 @@
 pkgname=systemd-boot-lifeboat
-pkgver=0.0.3
+pkgver=0.0.2
 pkgrel=1
 pkgdesc=''
 arch=('any')
@@ -15,6 +15,6 @@ package() {
   install -D -m0644 "${srcdir}/systemd-boot-lifeboat.service" "${pkgdir}/usr/lib/systemd/system/systemd-boot-lifeboat.service"
 }
 
-sha256sums=('761f14376c216ecade91cf2a5da801cb5628fde25b047bd7c2030d31da1447e0'
+sha256sums=('2f7c6c70291fba98391ffdbc77549e1e620a27be540bffd77570868206515e6e'
             '6c1ac4024a45276266161cf1df56e5b6a214539abb8c26e91914e58b730504db')
 
