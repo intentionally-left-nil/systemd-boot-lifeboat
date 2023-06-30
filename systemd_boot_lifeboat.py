@@ -60,8 +60,8 @@ def main(*, esp_path: str, boot_path: str, default_sort_key: str, default_versio
         lifeboat = default_config.create_lifeboat(now())
 
 
-@ total_ordering
-@ dc.dataclass(frozen=True, kw_only=True)
+@total_ordering
+@dc.dataclass(frozen=True, kw_only=True)
 class Config:
     path: str
     root: str
@@ -306,7 +306,7 @@ def bootctl(args: list[str], esp_path: Optional[str], boot_path: Optional[str]) 
 
 
 def get_bootctl_entries(*, esp_path: str, boot_path: Optional[str] = None) -> list[Config]:
-    entries = [json.loads(x) for x in bootctl(['--json=short', 'list'], esp_path, boot_path).splitlines()]
+    entries = json.loads(bootctl(['--json=short', 'list'], esp_path, boot_path))
     return [Config.from_bootctl(x) for x in entries if 'root' in x]
 
 
