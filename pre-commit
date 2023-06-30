@@ -1,5 +1,5 @@
 #!/bin/sh
-sed -i -z -r 's#sha256sums=\([^)]+\)##' PKGBUILD.dev
-sed -i -e :a -e '/^\n*$/{$d;N;};/\n$/ba' PKGBUILD.dev # remove trailing newlines
-printf "\n%s\n\n" "$(makepkg -g -p PKGBUILD.dev)" >> PKGBUILD.dev
-git add PKGBUILD.dev
+sed -i -z -r 's#sha256sums=\([^)]+\)##' PKGBUILD.dev || exit 1
+sed -i -e :a -e '/^\n*$/{$d;N;};/\n$/ba' PKGBUILD.dev || exit 1 # remove trailing newlines
+printf "\n%s\n\n" "$(makepkg -g -p PKGBUILD.dev)" >> PKGBUILD.dev || exit 1
+git add PKGBUILD.dev || exit 1
