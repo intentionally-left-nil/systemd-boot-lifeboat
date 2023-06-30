@@ -13,27 +13,31 @@ import shutil
 import subprocess
 import sys
 import time
+import traceback
 from types import TracebackType
 from typing import Any, Dict, Optional, NamedTuple, Type, Union
 
 global DRY_RUN
 DRY_RUN = False
 
+class LifeboatError(ValueError):
+    pass
+
 
 def main(*, esp_path: str, boot_path: str, default_sort_key: str, default_version: str, max_lifeboats: int, default_config_path: Optional[str]):
     if max_lifeboats < 1:
-        raise ValueError(f'max_lifeboats{max_lifeboats} must be > 1')
+        raise LifeboatError(f'max_lifeboats{max_lifeboats} must be > 1')
     if not default_config_path:
         default_config_path = get_default_config_path(esp_path=esp_path, boot_path=boot_path)
 
     configs = get_bootctl_entries(esp_path=esp_path, boot_path=boot_path)
-    default_config = next(x for x in configs if x.path == default_config_path)
+    default_config = next((x for x in configs if x.path == default_config_path), None)
     if not default_config:
-        raise ValueError(f'Could not find {default_config_path} in `bootcttl list`')
+        raise LifeboatError(f'Could not find {default_config_path} in `bootcttl list`')
 
     print(f'using {default_config.path} as the default config')
     if default_config.is_lifeboat():
-        raise ValueError(f'{default_config.basename()} is a lifeboat config and cannot be used as the default')
+        raise LifeboatError(f'{default_config.basename()} is a lifeboat config and cannot be used as the default')
 
     if not default_config.sort_key:
         default_config = dc.replace(default_config, sort_key=[
@@ -56,8 +60,8 @@ def main(*, esp_path: str, boot_path: str, default_sort_key: str, default_versio
         lifeboat = default_config.create_lifeboat(now())
 
 
-@ total_ordering
-@ dc.dataclass(frozen=True, kw_only=True)
+@total_ordering
+@dc.dataclass(frozen=True, kw_only=True)
 class Config:
     path: str
     root: str
@@ -141,10 +145,10 @@ class Config:
         try:
             match = re.search(r'^lifeboat_(\d+)_', self.basename())
             if match is None:
-                raise ValueError(f"{self.path} does not contain a timestamp")
+                raise LifeboatError(f"{self.path} does not contain a timestamp")
             return int(match.group(1))
         except Exception as e:
-            raise ValueError(f'{self.basename()} is not a lifeboat with a valid timestamp') from e
+            raise LifeboatError(f'{self.basename()} is not a lifeboat with a valid timestamp') from e
 
     def equivalent(self, other: Config) -> bool:
         try:
@@ -152,7 +156,7 @@ class Config:
                 {self._md5(filepath) for filepath in getattr(self, field)} == {self._md5(filepath) for filepath in getattr(other, field)} if field in Config.FIELDS_WITH_FILES
                 else getattr(self, field) == getattr(other, field)
                 for field in Config.CONF_FIELDS - Config.EQUIVALENCY_IGNORE_FIELDS)
-        except Md5Exception as e:
+        except Md5Error as e:
             print(
                 f'Warning: Could not open {e.filepath}. The config can not be considered equivalent because this file is missing')
             return False
@@ -173,7 +177,7 @@ class Config:
                     fp.write(conf)
                 print(f'Created boot entry {next(iter(self.title), self.basename())} with contents:\n{conf}\n\n')
         except Exception as e:
-            raise ValueError(f'Could not save config {self.basename()}') from e
+            raise LifeboatError(f'Could not save config {self.basename()}') from e
 
     def remove(self):
         for field in Config.FIELDS_WITH_FILES:
@@ -187,7 +191,7 @@ class Config:
                 with open(filepath, 'rb') as fp:
                     return hashlib.md5(fp.read()).hexdigest()
             except Exception as e:
-                raise Md5Exception(filepath, f'Could not determine the md5 has for {filepath}') from e
+                raise Md5Error(filepath, f'Could not determine the md5 has for {filepath}') from e
 
     def _lifeboat_path(self, filepath: str, ts: int) -> str:
         dir = os.path.dirname(filepath)
@@ -210,11 +214,11 @@ def pretty_date(ts: int) -> str:
     return datetime.datetime.fromtimestamp(ts).strftime("%b %-d, %Y (%H:%M)")
 
 
-class ChrootException(Exception):
+class ChrootError(LifeboatError):
     pass
 
 
-class Md5Exception(Exception):
+class Md5Error(LifeboatError):
     def __init__(self, filepath, *args, **kwargs):
         self.filepath = filepath
         super().__init__(*args, **kwargs)
@@ -249,7 +253,7 @@ class Chroot:
             Chroot.roots.append(root)
             Chroot.current_path = self.filepath
         except Exception as e:
-            raise ChrootException(f'Could not chroot to {self.filepath}') from e
+            raise ChrootError(f'Could not chroot to {self.filepath}') from e
 
     def __exit__(
         self, exc_type: Optional[Type[BaseException]], exc: Optional[BaseException], traceback: Optional[TracebackType]
@@ -265,7 +269,7 @@ class Chroot:
             if len(Chroot.roots) == 1:
                 os.close(Chroot.roots.pop().fd)
         except Exception as e:
-            raise ChrootException(f'Could not recover chroot from {self.filepath}') from e
+            raise ChrootError(f'Could not recover chroot from {self.filepath}') from e
 
 
 class FileTracker:
@@ -284,7 +288,7 @@ class FileTracker:
     def __exit__(
         self, exc_type: Optional[Type[BaseException]], exc: Optional[BaseException], traceback: Optional[TracebackType]
     ) -> Optional[bool]:
-        if exc is not None and not isinstance(exc, ChrootException):
+        if exc is not None and not isinstance(exc, ChrootError):
             for file in self.files:
                 delete_file(file.root, file.path)
         return False
@@ -302,7 +306,7 @@ def bootctl(args: list[str], esp_path: Optional[str], boot_path: Optional[str]) 
 
 
 def get_bootctl_entries(*, esp_path: str, boot_path: Optional[str] = None) -> list[Config]:
-    entries = [json.loads(x) for x in bootctl(['--json=short', 'list'], esp_path, boot_path).splitlines()]
+    entries = json.loads(bootctl(['--json=short', 'list'], esp_path, boot_path))
     return [Config.from_bootctl(x) for x in entries if 'root' in x]
 
 
@@ -316,18 +320,18 @@ def get_default_config_path(esp_path: str, boot_path: Optional[str]) -> str:
     section = takewhile(len, section)
     source = next(filter(lambda x: x.startswith('source:'), section), None)
     if not source:
-        raise ValueError('Could not determine the default entry from bootctl')
+        raise LifeboatError('Could not determine the default entry from bootctl')
     return source[len('source:'):].strip()
 
 
 def copy_file(src: str, dest: str):
     global DRY_RUN
     if not os.path.exists(src):
-        raise ValueError(
+        raise LifeboatError(
             f"Copying {os.path.basename(src)} to {os.path.basename(dest)} failed because {os.path.basename(src)} doesn't exist")
     print(f'Copying {src} to {dest}')
     if os.path.exists(dest):
-        raise ValueError(f'Copying {os.path.basename(src)} failed because {os.path.basename(dest)} already exists')
+        raise LifeboatError(f'Copying {os.path.basename(src)} failed because {os.path.basename(dest)} already exists')
 
     if DRY_RUN:
         print(f'--dry-run prevents copying {os.path.basename(src)} to {os.path.basename(dest)}')
@@ -337,7 +341,7 @@ def copy_file(src: str, dest: str):
         st = os.stat(src)
         os.chown(dest, st.st_uid, st.st_gid)
     except Exception as e:
-        raise ValueError(f'Error copying {os.path.basename(src)} to {os.path.basename(dest)} failed') from e
+        raise LifeboatError(f'Error copying {os.path.basename(src)} to {os.path.basename(dest)} failed') from e
 
 
 def delete_file(root: str, filepath: str):
@@ -379,6 +383,9 @@ if __name__ == '__main__':
 
     try:
         main(**args)
-    except Exception as e:
+    except LifeboatError as e:
         print(e)
+        sys.exit(1)
+    except Exception as e:
+        print(traceback.format_exc())
         sys.exit(1)
