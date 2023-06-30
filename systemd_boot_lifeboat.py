@@ -31,7 +31,7 @@ def main(*, esp_path: str, boot_path: str, default_sort_key: str, default_versio
         default_config_path = get_default_config_path(esp_path=esp_path, boot_path=boot_path)
 
     configs = get_bootctl_entries(esp_path=esp_path, boot_path=boot_path)
-    default_config = next(x for x in configs if x.path == default_config_path)
+    default_config = next((x for x in configs if x.path == default_config_path), None)
     if not default_config:
         raise LifeboatError(f'Could not find {default_config_path} in `bootcttl list`')
 

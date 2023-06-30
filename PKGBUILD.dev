@@ -15,6 +15,6 @@ package() {
   install -D -m0644 "${srcdir}/systemd-boot-lifeboat.service" "${pkgdir}/usr/lib/systemd/system/systemd-boot-lifeboat.service"
 }
 
-sha256sums=('63e5cd5cc3914502a7c172c3ec3605a97719bbe4f696b8dc0d49c54c06cac161'
+sha256sums=('6b372cf20b353bf13afedfd1212f529832426c4225ffcb58c7401479c9c49044'
             '6c1ac4024a45276266161cf1df56e5b6a214539abb8c26e91914e58b730504db')
 
