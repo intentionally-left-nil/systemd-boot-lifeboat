@@ -1,11 +1,11 @@
 import dataclasses as dc
-from systemd_boot_lifeboat import Config, Chroot, ChrootException, FileTracker, pretty_date, main
+from systemd_boot_lifeboat import Config, Chroot, ChrootError, FileTracker, pretty_date, main
 from multiprocessing.sharedctypes import Value
 import os
 import shutil
 import re
 from tempfile import TemporaryDirectory
-from typing import Dict, Optional, TypedDict, Union
+from typing import Dict, TypedDict, Union
 import unittest
 from unittest.mock import patch
 
@@ -296,8 +296,8 @@ class TestFileTracker(unittest.TestCase):
             with FileTracker() as tracker:
                 with Chroot(self.tmp.name):
                     tracker.track('a.txt')
-                    raise ChrootException('oh no')
-        self.assertRaises(ChrootException, run_test)
+                    raise ChrootError('oh no')
+        self.assertRaises(ChrootError, run_test)
         with open(a_path, 'r', encoding='utf8') as fp:
             self.assertEqual('hello', fp.read())
 
