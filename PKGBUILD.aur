@@ -1,7 +1,7 @@
 # Maintainer A. Kulkarni <cd+aur [shift-2] terminal.space>
 
 pkgname=systemd-boot-lifeboat
-pkgver=0.0.2
+pkgver=0.0.3
 pkgrel=1
 pkgdesc="Keep rotating backups of systemd-boot bootloader entries"
 arch=('any')
