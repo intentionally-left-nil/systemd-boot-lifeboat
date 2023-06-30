@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import time
+import traceback
 from types import TracebackType
 from typing import Any, Dict, Optional, NamedTuple, Type, Union
 
@@ -382,6 +383,9 @@ if __name__ == '__main__':
 
     try:
         main(**args)
-    except Exception as e:
+    except LifeboatError as e:
         print(e)
+        sys.exit(1)
+    except Exception as e:
+        print(traceback.format_exc())
         sys.exit(1)
