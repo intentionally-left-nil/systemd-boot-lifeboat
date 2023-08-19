@@ -66,6 +66,7 @@ class Config:
     path: str
     root: str
     autosave: bool = False
+    is_default: bool = False
     title: list[str] = dc.field(default_factory=list)
     version: list[str] = dc.field(default_factory=list)
     machine_id: list[str] = dc.field(default_factory=list)
@@ -81,9 +82,9 @@ class Config:
     CONF_FIELDS = {'title', 'version', 'machine_id', 'sort_key', 'linux', 'initrd',
                    'efi', 'options', 'devicetree', 'devicetree_overlay', 'architecture'}
     METADATA_FIELDS = {'path', 'root', 'autosave'}
-    BOOTCTL_FIELDS = CONF_FIELDS | {'path', 'root'}
+    BOOTCTL_FIELDS = CONF_FIELDS | {'path', 'root', 'is_default'}
     FIELDS_WITH_FILES = {'linux', 'initrd', 'efi'}
-    EQUIVALENCY_IGNORE_FIELDS = METADATA_FIELDS | {'title', 'version'}
+    EQUIVALENCY_IGNORE_FIELDS = METADATA_FIELDS | {'title', 'version', 'is_default'}
 
     @ classmethod
     def from_bootctl(cls, data: Dict[str, Union[str, list[str]]]) -> Config:
@@ -315,13 +316,11 @@ def get_default_path(path_type: str) -> str:
 
 
 def get_default_config_path(esp_path: str, boot_path: Optional[str]) -> str:
-    status = bootctl(['status'], esp_path, boot_path)
-    section = dropwhile(lambda x:  x != 'Default Boot Loader Entry:', map(lambda x: x.strip(), status.splitlines()))
-    section = takewhile(len, section)
-    source = next(filter(lambda x: x.startswith('source:'), section), None)
-    if not source:
+    entries = get_bootctl_entries(esp_path=esp_path, boot_path=boot_path)
+    defaults = [x for x in entries if x.is_default]
+    if len(defaults) != 1:
         raise LifeboatError('Could not determine the default entry from bootctl')
-    return source[len('source:'):].strip()
+    return defaults[0].path
 
 
 def copy_file(src: str, dest: str):
