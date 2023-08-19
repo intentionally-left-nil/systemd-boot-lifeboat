@@ -339,7 +339,7 @@ class TestEndToEnd(unittest.TestCase):
                                          title=['Arch Linux'], efi=["/EFI/Arch/linux.efi"], version=["version123"], sort_key=["linux"])
 
         def runner(default_config_path=default_config.path, max_lifeboats=2):
-            main(esp_path=self.tmp.name, boot_path=self.tmp.name, default_sort_key='linux',
+            main(default_sort_key='linux',
                  default_version='version123', max_lifeboats=max_lifeboats, default_config_path=default_config_path)
 
         # Verify the initial lifeboat gets created
@@ -347,7 +347,7 @@ class TestEndToEnd(unittest.TestCase):
         self.assertEqual(expected_default_config, self.load_config(expected_default_config.path))
         first_lifeboat = self.load_config(os.path.join(self.tmp.name, 'loader/entries/lifeboat_12345_arch.conf'))
         self.assertListEqual(sorted([expected_default_config, first_lifeboat]),
-                             sorted(self.mock_bootctl_entries(esp_path=None)))
+                             sorted(self.mock_bootctl_entries()))
         self.assertTrue(first_lifeboat.equivalent(expected_default_config))
         with open(os.path.join(self.tmp.name, 'EFI', 'Arch', 'lifeboat_12345_linux.efi'), 'r', encoding='utf8') as fp:
             self.assertEqual("my cool efi", fp.read())
@@ -360,7 +360,7 @@ class TestEndToEnd(unittest.TestCase):
         # Calling the runner when the efi has changed should result in no changes
         runner()
         self.assertListEqual(sorted([expected_default_config, first_lifeboat]),
-                             sorted(self.mock_bootctl_entries(esp_path=None)))
+                             sorted(self.mock_bootctl_entries()))
 
         # Now if the efi file changes, we should create a new entry
         with open(os.path.join(self.tmp.name, 'EFI', 'Arch', 'linux.efi'), 'w') as fp:
@@ -369,7 +369,7 @@ class TestEndToEnd(unittest.TestCase):
         runner()
         second_lifeboat = self.load_config(os.path.join(self.tmp.name, 'loader/entries/lifeboat_12348_arch.conf'))
         self.assertListEqual(sorted([expected_default_config, first_lifeboat, second_lifeboat]),
-                             sorted(self.mock_bootctl_entries(esp_path=None)))
+                             sorted(self.mock_bootctl_entries()))
         with open(os.path.join(self.tmp.name, 'EFI', 'Arch', 'lifeboat_12348_linux.efi'), 'r', encoding='utf8') as fp:
             self.assertEqual("my cool efi2", fp.read())
 
@@ -380,7 +380,7 @@ class TestEndToEnd(unittest.TestCase):
         runner()
         third_lifeboat = self.load_config(os.path.join(self.tmp.name, 'loader/entries/lifeboat_12349_arch.conf'))
         self.assertListEqual(sorted([expected_default_config, second_lifeboat, third_lifeboat]),
-                             sorted(self.mock_bootctl_entries(esp_path=None)))
+                             sorted(self.mock_bootctl_entries()))
         self.assertTrue(third_lifeboat.equivalent(expected_default_config))
 
     def load_config(self, filepath: str) -> Config:
@@ -393,7 +393,7 @@ class TestEndToEnd(unittest.TestCase):
                 existing.append(val)
         return config
 
-    def mock_bootctl_entries(self, esp_path, boot_path=None):
+    def mock_bootctl_entries(self):
         filepaths = [os.path.join(self.tmp.name, 'loader', 'entries', name)
                      for name in os.listdir(os.path.join(self.tmp.name, 'loader', 'entries'))]
         return [self.load_config(x) for x in filepaths]

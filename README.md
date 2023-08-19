@@ -38,9 +38,6 @@ Created boot entry: lifeboat_1660426748_arch_signed.conf
 
 # Configuration options
 
-The main flags to change are the `--esp-path` if your config is not mounted at /efi
-and `--default-config-path` to hardcode the name of the config you want backed up (e.g. `/efi/loader/entries/arch.conf`)
-
 If you are using the provided `systemd-boot-lifeboat.service`, you can customize these options by creating a drop-in file.
 Simply run `sudo systemctl edit systemd-boot-lifeboat.service` and add the following to your override.conf:
 
@@ -61,10 +58,6 @@ Clone the boot entry if it has changed
 options:
   -h, --help            show this help message and exit
   -n MAX_LIFEBOATS, --max-lifeboats MAX_LIFEBOATS
-  -e ESP_PATH, --esp-path ESP_PATH
-                        Directory of the efi system partition (default: /efi)
-  -b BOOT_PATH, --boot-path BOOT_PATH
-                        Directory of the efi system partition (default: None)
   --default-sort-key DEFAULT_SORT_KEY
                         Default sort key to use, if not present (default: linux)
   --default-version DEFAULT_VERSION
@@ -74,7 +67,7 @@ options:
   --dry-run             Print what would actually happen, but take no action (default: False)
 ```
 
-By default, systemd-boot-lifeboat looks in the `/efi` directory for your ESP, and keeps the previous two entries backed up. You can change this by passing in --efi and --max_backups to the python script. To make this change, you need to type `systemctl edit systemd-boot-lifeboat.service` and modify the command line as appropriate
+By default, systemd-boot-lifeboat keeps the previous two entries backed up. You can change this by passing in --max_backups to the python script. To make this change, you need to type `systemctl edit systemd-boot-lifeboat.service` and modify the command line as appropriate.
 
 # Development
 

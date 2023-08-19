@@ -24,13 +24,13 @@ class LifeboatError(ValueError):
     pass
 
 
-def main(*, esp_path: str, boot_path: str, default_sort_key: str, default_version: str, max_lifeboats: int, default_config_path: Optional[str]):
+def main(*, default_sort_key: str, default_version: str, max_lifeboats: int, default_config_path: Optional[str]):
     if max_lifeboats < 1:
         raise LifeboatError(f'max_lifeboats{max_lifeboats} must be > 1')
     if not default_config_path:
-        default_config_path = get_default_config_path(esp_path=esp_path, boot_path=boot_path)
+        default_config_path = get_default_config_path()
 
-    configs = get_bootctl_entries(esp_path=esp_path, boot_path=boot_path)
+    configs = get_bootctl_entries()
     default_config = next((x for x in configs if x.path == default_config_path), None)
     if not default_config:
         raise LifeboatError(f'Could not find {default_config_path} in `bootcttl list`')
@@ -295,28 +295,24 @@ class FileTracker:
         return False
 
 
-def bootctl(args: list[str], esp_path: Optional[str], boot_path: Optional[str]) -> str:
+def bootctl(args: list[str]) -> str:
     command = ['bootctl', '--no-pager']
-    if esp_path:
-        command.append(f'--esp-path={esp_path}')
-    if boot_path:
-        command.append(f'--boot-path={boot_path}')
     command.extend(args)
     with Chroot('/'):
         return subprocess.run(command, stdout=subprocess.PIPE).stdout.decode('utf8').strip()
 
 
-def get_bootctl_entries(*, esp_path: str, boot_path: Optional[str] = None) -> list[Config]:
-    entries = json.loads(bootctl(['--json=short', 'list'], esp_path, boot_path))
+def get_bootctl_entries() -> list[Config]:
+    entries = json.loads(bootctl(['--json=short', 'list']))
     return [Config.from_bootctl(x) for x in entries if 'root' in x]
 
 
 def get_default_path(path_type: str) -> str:
-    return bootctl([f'--print-{path_type}-path'], esp_path=None, boot_path=None)
+    return bootctl([f'--print-{path_type}-path'])
 
 
-def get_default_config_path(esp_path: str, boot_path: Optional[str]) -> str:
-    entries = get_bootctl_entries(esp_path=esp_path, boot_path=boot_path)
+def get_default_config_path() -> str:
+    entries = get_bootctl_entries()
     defaults = [x for x in entries if x.is_default]
     if len(defaults) != 1:
         raise LifeboatError('Could not determine the default entry from bootctl')
@@ -366,9 +362,6 @@ if __name__ == '__main__':
     parser = ArgumentParser(description='Clone the boot entry if it has changed',
                             formatter_class=ArgumentDefaultsHelpFormatter)
     parser.add_argument('-n', '--max-lifeboats', type=int, default=2)
-    parser.add_argument('-e', '--esp-path', help='Directory of the efi system partition',
-                        default=get_default_path('esp'))
-    parser.add_argument('-b', '--boot-path', help='Directory of the efi system partition', default=None)
     parser.add_argument('--default-sort-key', help='Default sort key to use, if not present', default='linux')
     parser.add_argument('--default-version', help='Default sort key to use, if not present', default=current_version)
     parser.add_argument('-c', '--default-config-path',
