@@ -79,8 +79,9 @@ class Config:
     devicetree_overlay: list[str] = dc.field(default_factory=list)
     architecture: list[str] = dc.field(default_factory=list)
 
-    CONF_FIELDS = {'title', 'version', 'machine_id', 'sort_key', 'linux', 'initrd',
-                   'efi', 'options', 'devicetree', 'devicetree_overlay', 'architecture'}
+    CONF_FIELDS_ORDERED = ['title', 'version', 'machine_id', 'sort_key', 'linux', 'initrd',
+                   'efi', 'options', 'devicetree', 'devicetree_overlay', 'architecture']
+    CONF_FIELDS = set(CONF_FIELDS_ORDERED)
     METADATA_FIELDS = {'path', 'root', 'autosave'}
     BOOTCTL_FIELDS = CONF_FIELDS | {'path', 'root', 'is_default'}
     FIELDS_WITH_FILES = {'linux', 'initrd', 'efi'}
@@ -164,7 +165,7 @@ class Config:
 
     def to_conf(self) -> str:
         return '\n'.join([f'{re.sub("_", "-", field)}\t{val}'
-                          for field in Config.CONF_FIELDS
+                          for field in Config.CONF_FIELDS_ORDERED
                           for val in getattr(self, field)])
 
     def write(self):
