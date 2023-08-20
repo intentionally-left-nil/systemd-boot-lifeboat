@@ -7,15 +7,15 @@ Automatically backup your bootloader entries to a backup configuration, for easy
 # Example
 
 ```
-#> sudo ./systemd_boot_lifeboat.py --esp=/efi
+#> sudo ./systemd_boot_lifeboat.py
 Copying /EFI/Arch/linux-signed.efi to /EFI/Arch/lifeboat_1660426707_linux-signed.efi
 Created boot entry: lifeboat_1660426707_arch_signed.conf
-#> sudo ./systemd_boot_lifeboat.py --esp=/efi
+#> sudo ./systemd_boot_lifeboat.py
 arch_signed.conf is already backed up to lifeboat_1660426707_arch_signed.conf
  Nothing to do
 #> sudo mkinitcpio -P; sudo sbupdate
 ==> Building image from preset: /etc/mkinitcpio.d/linux.preset: 'default'
-#> sudo ./systemd_boot_lifeboat.py --esp=/efi
+#> sudo ./systemd_boot_lifeboat.py
 Copying /EFI/Arch/linux-signed.efi to /EFI/Arch/lifeboat_1660426748_linux-signed.efi
 Created boot entry: lifeboat_1660426748_arch_signed.conf
 ```
