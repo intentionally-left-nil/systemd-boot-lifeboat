@@ -1,5 +1,5 @@
 pkgname=systemd-boot-lifeboat
-pkgver=0.0.3
+pkgver=0.0.5
 pkgrel=1
 pkgdesc=''
 arch=('any')
