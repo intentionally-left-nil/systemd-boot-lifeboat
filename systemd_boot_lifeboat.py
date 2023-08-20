@@ -20,17 +20,21 @@ from typing import Any, Dict, Optional, NamedTuple, Type, Union
 global DRY_RUN
 DRY_RUN = False
 
+EXPLICIT_CONFIG_FILE = "type1"
+AUTO_EFI_CONFIG = "type2"
+
+
 class LifeboatError(ValueError):
     pass
 
 
-def main(*, esp_path: str, boot_path: str, default_sort_key: str, default_version: str, max_lifeboats: int, default_config_path: Optional[str]):
+def main(*, default_sort_key: str, default_version: str, max_lifeboats: int, default_config_path: Optional[str]):
     if max_lifeboats < 1:
         raise LifeboatError(f'max_lifeboats{max_lifeboats} must be > 1')
     if not default_config_path:
-        default_config_path = get_default_config_path(esp_path=esp_path, boot_path=boot_path)
+        default_config_path = get_default_config_path()
 
-    configs = get_bootctl_entries(esp_path=esp_path, boot_path=boot_path)
+    configs = get_bootctl_entries()
     default_config = next((x for x in configs if x.path == default_config_path), None)
     if not default_config:
         raise LifeboatError(f'Could not find {default_config_path} in `bootcttl list`')
@@ -46,7 +50,7 @@ def main(*, esp_path: str, boot_path: str, default_sort_key: str, default_versio
     if not default_config.version:
         default_config = dc.replace(default_config, version=[default_version], autosave=True)
 
-    lifeboats = [x for x in configs if x.is_lifeboat()]
+    lifeboats = [x for x in configs if x.is_lifeboat() and x.type == EXPLICIT_CONFIG_FILE]
     lifeboats.sort(reverse=True)  # Sort from newest to oldest
     match = next((x for x in lifeboats if x.equivalent(default_config)), None)
     if match:
@@ -65,6 +69,7 @@ def main(*, esp_path: str, boot_path: str, default_sort_key: str, default_versio
 class Config:
     path: str
     root: str
+    type: str = EXPLICIT_CONFIG_FILE
     autosave: bool = False
     is_default: bool = False
     title: list[str] = dc.field(default_factory=list)
@@ -79,12 +84,13 @@ class Config:
     devicetree_overlay: list[str] = dc.field(default_factory=list)
     architecture: list[str] = dc.field(default_factory=list)
 
-    CONF_FIELDS = {'title', 'version', 'machine_id', 'sort_key', 'linux', 'initrd',
-                   'efi', 'options', 'devicetree', 'devicetree_overlay', 'architecture'}
+    CONF_FIELDS_ORDERED = ['title', 'version', 'machine_id', 'sort_key', 'linux', 'initrd',
+                   'efi', 'options', 'devicetree', 'devicetree_overlay', 'architecture']
+    CONF_FIELDS = set(CONF_FIELDS_ORDERED)
     METADATA_FIELDS = {'path', 'root', 'autosave'}
-    BOOTCTL_FIELDS = CONF_FIELDS | {'path', 'root', 'is_default'}
+    BOOTCTL_FIELDS = CONF_FIELDS | {'path', 'root', 'is_default', 'type'}
     FIELDS_WITH_FILES = {'linux', 'initrd', 'efi'}
-    EQUIVALENCY_IGNORE_FIELDS = METADATA_FIELDS | {'title', 'version', 'is_default'}
+    EQUIVALENCY_IGNORE_FIELDS = METADATA_FIELDS | {'title', 'version', 'is_default', 'type'}
 
     @ classmethod
     def from_bootctl(cls, data: Dict[str, Union[str, list[str]]]) -> Config:
@@ -127,11 +133,28 @@ class Config:
             else:
                 title = self.basename()
 
+            autosave = True
+            type = self.type
+            if self.type == EXPLICIT_CONFIG_FILE:
+                path = self.path
+            elif self.type == AUTO_EFI_CONFIG:
+                root = get_default_path("boot")
+                basename = self.basename()
+                name, _ext = os.path.splitext(basename)
+                path = os.path.join(root, "loader", "entries", f"{name}.conf")
+                type = EXPLICIT_CONFIG_FILE
+            else:
+                path = self.path
+                autosave = False
+                
+
+
             config = dc.replace(self,
-                                path=self._lifeboat_path(self.path, ts),
+                                path=self._lifeboat_path(path, ts),
                                 title=[f'{title} @{pretty_date(ts)}'],
                                 version=[f'-{self.version[0]}-{ts}'],
-                                autosave=True,
+                                autosave=autosave,
+                                type=type,
                                 **new_args)
         return config
 
@@ -164,10 +187,13 @@ class Config:
 
     def to_conf(self) -> str:
         return '\n'.join([f'{re.sub("_", "-", field)}\t{val}'
-                          for field in Config.CONF_FIELDS
+                          for field in Config.CONF_FIELDS_ORDERED
                           for val in getattr(self, field)])
 
     def write(self):
+        if self.type != EXPLICIT_CONFIG_FILE:
+            print(f"Skipping writing a config file because the config type is {self.type}")
+            return
         try:
             with Chroot('/'), open(self.path, 'w' if self.autosave else 'x', encoding='utf8') as fp:
                 conf = self.to_conf()
@@ -178,13 +204,14 @@ class Config:
                     fp.write(conf)
                 print(f'Created boot entry {next(iter(self.title), self.basename())} with contents:\n{conf}\n\n')
         except Exception as e:
-            raise LifeboatError(f'Could not save config {self.basename()}') from e
+            raise LifeboatError(f'Could not save config {self.path}') from e
 
     def remove(self):
         for field in Config.FIELDS_WITH_FILES:
             for file in getattr(self, field):
                 delete_file(self.root, file)
-        delete_file('/', self.path)
+        if self.type == EXPLICIT_CONFIG_FILE:
+            delete_file('/', self.path)
 
     def _md5(self, filepath) -> str:
         with Chroot(self.root):
@@ -295,28 +322,24 @@ class FileTracker:
         return False
 
 
-def bootctl(args: list[str], esp_path: Optional[str], boot_path: Optional[str]) -> str:
+def bootctl(args: list[str]) -> str:
     command = ['bootctl', '--no-pager']
-    if esp_path:
-        command.append(f'--esp-path={esp_path}')
-    if boot_path:
-        command.append(f'--boot-path={boot_path}')
     command.extend(args)
     with Chroot('/'):
         return subprocess.run(command, stdout=subprocess.PIPE).stdout.decode('utf8').strip()
 
 
-def get_bootctl_entries(*, esp_path: str, boot_path: Optional[str] = None) -> list[Config]:
-    entries = json.loads(bootctl(['--json=short', 'list'], esp_path, boot_path))
+def get_bootctl_entries() -> list[Config]:
+    entries = json.loads(bootctl(['--json=short', 'list']))
     return [Config.from_bootctl(x) for x in entries if 'root' in x]
 
 
 def get_default_path(path_type: str) -> str:
-    return bootctl([f'--print-{path_type}-path'], esp_path=None, boot_path=None)
+    return bootctl([f'--print-{path_type}-path'])
 
 
-def get_default_config_path(esp_path: str, boot_path: Optional[str]) -> str:
-    entries = get_bootctl_entries(esp_path=esp_path, boot_path=boot_path)
+def get_default_config_path() -> str:
+    entries = get_bootctl_entries()
     defaults = [x for x in entries if x.is_default]
     if len(defaults) != 1:
         raise LifeboatError('Could not determine the default entry from bootctl')
@@ -366,9 +389,6 @@ if __name__ == '__main__':
     parser = ArgumentParser(description='Clone the boot entry if it has changed',
                             formatter_class=ArgumentDefaultsHelpFormatter)
     parser.add_argument('-n', '--max-lifeboats', type=int, default=2)
-    parser.add_argument('-e', '--esp-path', help='Directory of the efi system partition',
-                        default=get_default_path('esp'))
-    parser.add_argument('-b', '--boot-path', help='Directory of the efi system partition', default=None)
     parser.add_argument('--default-sort-key', help='Default sort key to use, if not present', default='linux')
     parser.add_argument('--default-version', help='Default sort key to use, if not present', default=current_version)
     parser.add_argument('-c', '--default-config-path',
