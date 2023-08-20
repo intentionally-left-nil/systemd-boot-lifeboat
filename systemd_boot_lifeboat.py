@@ -50,7 +50,7 @@ def main(*, default_sort_key: str, default_version: str, max_lifeboats: int, def
     if not default_config.version:
         default_config = dc.replace(default_config, version=[default_version], autosave=True)
 
-    lifeboats = [x for x in configs if x.is_lifeboat()]
+    lifeboats = [x for x in configs if x.is_lifeboat() and x.type == EXPLICIT_CONFIG_FILE]
     lifeboats.sort(reverse=True)  # Sort from newest to oldest
     match = next((x for x in lifeboats if x.equivalent(default_config)), None)
     if match:
