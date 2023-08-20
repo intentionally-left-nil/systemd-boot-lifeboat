@@ -1,5 +1,5 @@
 import dataclasses as dc
-from systemd_boot_lifeboat import Config, Chroot, ChrootError, FileTracker, pretty_date, main
+from systemd_boot_lifeboat import Config, Chroot, ChrootError, FileTracker, pretty_date, main, EXPLICIT_CONFIG_FILE, AUTO_EFI_CONFIG
 from multiprocessing.sharedctypes import Value
 import os
 import shutil
@@ -12,12 +12,18 @@ from unittest.mock import patch
 
 class TestConfig(unittest.TestCase):
     def setUp(self):
+        if os.getuid() != 0:
+            self.skipTest('Must run unit tests as root')
+
         self.maxDiff = None
         self.tmp = TemporaryDirectory()
         self.reset()
 
-        if os.getuid() != 0:
-            self.skipTest('Must run unit tests as root')
+        default_path = self.tmp.name
+        get_default_path = lambda x: default_path
+
+        self.patcher = patch('systemd_boot_lifeboat.get_default_path', get_default_path)
+        self.patcher.start()
 
     def reset(self):
         for filename in os.listdir(self.tmp.name):
@@ -31,6 +37,7 @@ class TestConfig(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+        self.patcher.stop()
         super().tearDown()
 
     def test_from_bootctl(self):
@@ -70,16 +77,23 @@ class TestConfig(unittest.TestCase):
             Test(
                 name="efi entry",
                 config=Config(path=os.path.join(self.tmp.name, "loader/entries/arch.conf"), root=self.tmp.name,
-                              title=['Arch Linux'], efi=["/EFI/Arch/linux.efi"], sort_key=["linux"], version=["linux5.19"], autosave=True),
+                              title=['Arch Linux'], efi=["/EFI/Arch/linux.efi"], sort_key=["linux"], version=["linux5.19"], autosave=True, type=EXPLICIT_CONFIG_FILE),
                 expected=Config(path=os.path.join(self.tmp.name, "loader/entries/lifeboat_12345_arch.conf"), root=self.tmp.name,
-                                title=[f'Arch Linux @{pretty_date(ts)}'], efi=["/EFI/Arch/lifeboat_12345_linux.efi"], sort_key=["linux"], version=["-linux5.19-12345"])
+                                title=[f'Arch Linux @{pretty_date(ts)}'], efi=["/EFI/Arch/lifeboat_12345_linux.efi"], sort_key=["linux"], version=["-linux5.19-12345"], type=EXPLICIT_CONFIG_FILE)
             ),
             Test(
                 name="simple linux entry",
                 config=Config(path=os.path.join(self.tmp.name, "loader/entries/arch.conf"), root=self.tmp.name,
-                              title=['Arch Linux'], linux=['/vmlinuz-linux'], initrd=['/initramfs-linux.img'], sort_key=["linux"], version=["linux5.19"], autosave=True),
+                              title=['Arch Linux'], linux=['/vmlinuz-linux'], initrd=['/initramfs-linux.img'], sort_key=["linux"], version=["linux5.19"], type=EXPLICIT_CONFIG_FILE, autosave=True),
                 expected=Config(path=os.path.join(self.tmp.name, "loader/entries/lifeboat_12345_arch.conf"), root=self.tmp.name,
-                                title=[f'Arch Linux @{pretty_date(ts)}'], linux=["/lifeboat_12345_vmlinuz-linux"], initrd=["/lifeboat_12345_initramfs-linux.img"], sort_key=["linux"], version=["-linux5.19-12345"])
+                                title=[f'Arch Linux @{pretty_date(ts)}'], linux=["/lifeboat_12345_vmlinuz-linux"], initrd=["/lifeboat_12345_initramfs-linux.img"], sort_key=["linux"], version=["-linux5.19-12345"], type=EXPLICIT_CONFIG_FILE)
+            ),
+            Test(
+                name="auto-generated efi path",
+                config=Config(path=os.path.join(self.tmp.name, "/EFI/Arch/linux.efi"), root=self.tmp.name,
+                              title=['Arch Linux'], linux=['/EFI/Arch/linux.efi'], sort_key=["linux"], version=["linux5.19"], type=AUTO_EFI_CONFIG, autosave=True),
+                expected=Config(path=os.path.join(self.tmp.name, "loader/entries/lifeboat_12345_linux.conf"), root=self.tmp.name,
+                                title=[f'Arch Linux @{pretty_date(ts)}'], linux=["/EFI/Arch/lifeboat_12345_linux.efi"], sort_key=["linux"], version=["-linux5.19-12345"], type=EXPLICIT_CONFIG_FILE)
             ),
             Test(
                 name="linux with multiple initrd",
@@ -87,13 +101,13 @@ class TestConfig(unittest.TestCase):
                               title=['Arch Linux'], linux=['/vmlinuz-linux'],
                               initrd=['/initramfs-linux.img',
                                       '/intel-ucode.img', '/amd-ucode.img'],
-                              sort_key=["linux"], version=["linux5.19"], autosave=True),
+                              sort_key=["linux"], version=["linux5.19"], autosave=True, type=EXPLICIT_CONFIG_FILE),
                 expected=Config(path=os.path.join(self.tmp.name, "loader/entries/lifeboat_12345_arch.conf"), root=self.tmp.name,
                                 title=[f'Arch Linux @{pretty_date(ts)}'], linux=["/lifeboat_12345_vmlinuz-linux"],
                                 initrd=["/lifeboat_12345_initramfs-linux.img",
                                         "/lifeboat_12345_intel-ucode.img", '/lifeboat_12345_amd-ucode.img'],
-                                sort_key=["linux"], version=["-linux5.19-12345"])
-            )
+                                sort_key=["linux"], version=["-linux5.19-12345"], type=EXPLICIT_CONFIG_FILE)
+            ),
         ]
         for test in tests:
             with self.subTest(test['name']):
@@ -119,9 +133,12 @@ class TestConfig(unittest.TestCase):
                     with open('/'.join([test['expected'].root, test['expected'].efi[0]]), encoding='utf8') as fp:
                         self.assertEqual('my cool efi', fp.read())
 
-                if test['config'].linux:
+                if test['config'].linux and test['config'].type == EXPLICIT_CONFIG_FILE:
                     with open('/'.join([test['expected'].root, test['expected'].linux[0]]), encoding='utf8') as fp:
                         self.assertEqual('my cool /linux', fp.read())
+                if test['config'].linux and test['config'].type == AUTO_EFI_CONFIG:
+                    with open('/'.join([test['expected'].root, test['expected'].linux[0]]), encoding='utf8') as fp:
+                        self.assertEqual('my cool efi', fp.read())
 
                 for name, path in zip(test['config'].initrd, test['expected'].initrd):
                     with open('/'.join([test['expected'].root, path]), encoding='utf8') as fp:
@@ -334,7 +351,7 @@ class TestEndToEnd(unittest.TestCase):
         with open(os.path.join(self.tmp.name, 'EFI', 'Arch', 'linux.efi'), 'w') as fp:
             fp.write('my cool efi')
         default_config = Config(path=os.path.join(self.tmp.name, "loader/entries/arch.conf"), root=self.tmp.name,
-                                title=['Arch Linux'], efi=["/EFI/Arch/linux.efi"], autosave=True)
+                                title=['Arch Linux'], efi=["/EFI/Arch/linux.efi"], autosave=True, is_default=True)
         expected_default_config = Config(path=os.path.join(self.tmp.name, "loader/entries/arch.conf"), root=self.tmp.name,
                                          title=['Arch Linux'], efi=["/EFI/Arch/linux.efi"], version=["version123"], sort_key=["linux"])
 
@@ -397,6 +414,11 @@ class TestEndToEnd(unittest.TestCase):
         filepaths = [os.path.join(self.tmp.name, 'loader', 'entries', name)
                      for name in os.listdir(os.path.join(self.tmp.name, 'loader', 'entries'))]
         return [self.load_config(x) for x in filepaths]
+
+
+if 'unittest.util' in __import__('sys').modules:
+    # Show full diff in self.assertEqual.
+    __import__('sys').modules['unittest.util']._MAX_LENGTH = 999999999
 
 
 if __name__ == "__main__":

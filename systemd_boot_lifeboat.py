@@ -20,6 +20,10 @@ from typing import Any, Dict, Optional, NamedTuple, Type, Union
 global DRY_RUN
 DRY_RUN = False
 
+EXPLICIT_CONFIG_FILE = "type1"
+AUTO_EFI_CONFIG = "type2"
+
+
 class LifeboatError(ValueError):
     pass
 
@@ -65,6 +69,7 @@ def main(*, default_sort_key: str, default_version: str, max_lifeboats: int, def
 class Config:
     path: str
     root: str
+    type: str = EXPLICIT_CONFIG_FILE
     autosave: bool = False
     is_default: bool = False
     title: list[str] = dc.field(default_factory=list)
@@ -83,9 +88,9 @@ class Config:
                    'efi', 'options', 'devicetree', 'devicetree_overlay', 'architecture']
     CONF_FIELDS = set(CONF_FIELDS_ORDERED)
     METADATA_FIELDS = {'path', 'root', 'autosave'}
-    BOOTCTL_FIELDS = CONF_FIELDS | {'path', 'root', 'is_default'}
+    BOOTCTL_FIELDS = CONF_FIELDS | {'path', 'root', 'is_default', 'type'}
     FIELDS_WITH_FILES = {'linux', 'initrd', 'efi'}
-    EQUIVALENCY_IGNORE_FIELDS = METADATA_FIELDS | {'title', 'version', 'is_default'}
+    EQUIVALENCY_IGNORE_FIELDS = METADATA_FIELDS | {'title', 'version', 'is_default', 'type'}
 
     @ classmethod
     def from_bootctl(cls, data: Dict[str, Union[str, list[str]]]) -> Config:
@@ -128,11 +133,28 @@ class Config:
             else:
                 title = self.basename()
 
+            autosave = True
+            type = self.type
+            if self.type == EXPLICIT_CONFIG_FILE:
+                path = self.path
+            elif self.type == AUTO_EFI_CONFIG:
+                root = get_default_path("boot")
+                basename = self.basename()
+                name, _ext = os.path.splitext(basename)
+                path = os.path.join(root, "loader", "entries", f"{name}.conf")
+                type = EXPLICIT_CONFIG_FILE
+            else:
+                path = self.path
+                autosave = False
+                
+
+
             config = dc.replace(self,
-                                path=self._lifeboat_path(self.path, ts),
+                                path=self._lifeboat_path(path, ts),
                                 title=[f'{title} @{pretty_date(ts)}'],
                                 version=[f'-{self.version[0]}-{ts}'],
-                                autosave=True,
+                                autosave=autosave,
+                                type=type,
                                 **new_args)
         return config
 
@@ -169,6 +191,9 @@ class Config:
                           for val in getattr(self, field)])
 
     def write(self):
+        if self.type != EXPLICIT_CONFIG_FILE:
+            print(f"Skipping writing a config file because the config type is {self.type}")
+            return
         try:
             with Chroot('/'), open(self.path, 'w' if self.autosave else 'x', encoding='utf8') as fp:
                 conf = self.to_conf()
@@ -179,13 +204,14 @@ class Config:
                     fp.write(conf)
                 print(f'Created boot entry {next(iter(self.title), self.basename())} with contents:\n{conf}\n\n')
         except Exception as e:
-            raise LifeboatError(f'Could not save config {self.basename()}') from e
+            raise LifeboatError(f'Could not save config {self.path}') from e
 
     def remove(self):
         for field in Config.FIELDS_WITH_FILES:
             for file in getattr(self, field):
                 delete_file(self.root, file)
-        delete_file('/', self.path)
+        if self.type == EXPLICIT_CONFIG_FILE:
+            delete_file('/', self.path)
 
     def _md5(self, filepath) -> str:
         with Chroot(self.root):
